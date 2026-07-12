@@ -83,14 +83,27 @@ def test_default_registry_contains_all_tools() -> None:
         assert t.json_schema.get("type") == "object", t.name
 
 
-async def test_general_intent_disables_tools() -> None:
+async def test_general_intent_keeps_tools_available() -> None:
+    """GENERAL=规则未识别≠闲聊：工具须保持可用，否则未覆盖表达会让模型编造结果。"""
     llm = FakeLLM([_final_completion("你好，我是差旅助手。")])
     orch = TravelOrchestrator(llm=llm)  # type: ignore[arg-type]
     await orch.run_completion([_user("你好")])
-    assert llm.calls[0].get("tools") is None
+    assert llm.calls[0].get("tools") is not None
+    assert llm.calls[0]["tool_choice"] == "auto"
 
 
-async def test_policy_intent_forces_rag_tool_first_round() -> None:
+async def test_reimbursement_intent_recognized() -> None:
+    from app.core.intent.recognizer import IntentRecognizer, TravelIntent
+
+    r = IntentRecognizer()
+    out = await r.recognize("行程结束了，一键提交报销")
+    assert out.intent is TravelIntent.APPLICATION
+
+
+async def test_policy_intent_forces_rag_tool_first_round(monkeypatch) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "llm_force_tool_choice", True)
     llm = FakeLLM(
         [
             _tool_call_completion("search_travel_policy_docs", '{"query": "差标"}'),

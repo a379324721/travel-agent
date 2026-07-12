@@ -128,7 +128,11 @@ class TravelOrchestrator:
     async def _route(
         self, messages: list[ChatMessage]
     ) -> tuple[list[dict[str, Any]] | None, Any]:
-        """意图路由：闲聊不带工具；政策类问题首轮强制检索制度文档。"""
+        """意图路由：政策类问题首轮强制检索制度文档。
+
+        GENERAL 表示"规则未识别"而非闲聊，工具保持可用（tool_choice=auto），
+        否则未覆盖的表达（如报销）会让模型无工具可调而编造结果。
+        """
         last_user = next(
             (m.content for m in reversed(messages) if m.role == MessageRole.USER), ""
         )
@@ -136,9 +140,7 @@ class TravelOrchestrator:
         logger.info(
             "intent.recognized", intent=result.intent.value, confidence=result.confidence
         )
-        if result.intent is TravelIntent.GENERAL:
-            return None, None
-        if result.intent in (TravelIntent.POLICY, TravelIntent.RAG):
+        if result.intent in (TravelIntent.POLICY, TravelIntent.RAG) and settings.llm_force_tool_choice:
             forced = {"type": "function", "function": {"name": "search_travel_policy_docs"}}
             return self._tool_defs(), forced
         return self._tool_defs(), "auto"

@@ -79,8 +79,9 @@ class RuleEngine:
                 "application",
                 1.0,
                 (
-                    re.compile(r"(提|提交|发起).{0,6}(申请|审批|报备)"),
+                    re.compile(r"(提|提交|发起).{0,6}(申请|审批|报备|报销)"),
                     re.compile(r"(出差|差旅).{0,6}申请"),
+                    re.compile(r"(报销|贴票|费用单)"),
                 ),
             ),
             RuleSpec(
