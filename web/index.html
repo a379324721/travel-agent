@@ -71,7 +71,39 @@
   .user .bubble { background: var(--user-bubble); color: #fff; border-bottom-right-radius: 4px; }
   .assistant .bubble {
     background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 4px;
+    white-space: normal;
   }
+  /* markdown 元素样式（仅助手气泡内） */
+  .bubble.md > :first-child { margin-top: 0; }
+  .bubble.md > :last-child { margin-bottom: 0; }
+  .bubble.md p, .bubble.md ul, .bubble.md ol, .bubble.md table,
+  .bubble.md blockquote, .bubble.md pre { margin: 8px 0; }
+  .bubble.md h1, .bubble.md h2, .bubble.md h3, .bubble.md h4 {
+    margin: 12px 0 6px; font-size: 15px; font-weight: 700;
+  }
+  .bubble.md ul, .bubble.md ol { padding-left: 22px; }
+  .bubble.md li { margin: 2px 0; }
+  .bubble.md code {
+    background: var(--chip-bg); border-radius: 4px; padding: 1px 5px;
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .bubble.md pre {
+    background: var(--chip-bg); border-radius: 8px; padding: 10px 12px; overflow-x: auto;
+  }
+  .bubble.md pre code { background: none; padding: 0; }
+  .bubble.md table {
+    border-collapse: collapse; font-size: 13.5px; display: block;
+    overflow-x: auto; max-width: 100%;
+  }
+  .bubble.md th, .bubble.md td {
+    border: 1px solid var(--line); padding: 5px 10px; text-align: left;
+  }
+  .bubble.md th { background: var(--chip-bg); }
+  .bubble.md blockquote {
+    border-left: 3px solid var(--line); padding-left: 10px; color: var(--muted);
+  }
+  .bubble.md a { color: var(--accent); }
+  .bubble.md hr { border: 0; border-top: 1px solid var(--line); }
   .chips { margin: 4px 0 2px; display: flex; flex-direction: column; gap: 6px; }
   .chip {
     align-self: flex-start; background: var(--chip-bg); color: var(--chip-text);
@@ -146,6 +178,7 @@
 </main>
 </div>
 
+<script src="/web/marked.min.js"></script>
 <script>
 const TOOL_LABELS = {
   plan_travel_itinerary: "生成行程草稿",
@@ -184,12 +217,30 @@ function setSession(id) {
 function scrollBottom() { chatEl.scrollTop = chatEl.scrollHeight; }
 function clearMessages() { messagesEl.querySelectorAll(".msg").forEach((m) => m.remove()); }
 
+function escapeHtml(s) {
+  return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+/* 助手消息按 markdown 渲染：先转义原始 HTML 防注入，再交给 marked。 */
+function renderMarkdown(el, text) {
+  if (typeof marked === "undefined") { el.textContent = text; return; }
+  el.classList.add("md");
+  el.innerHTML = marked.parse(escapeHtml(text), { breaks: true });
+  for (const a of el.querySelectorAll("a")) {
+    const href = a.getAttribute("href") || "";
+    if (!/^https?:/i.test(href)) { a.removeAttribute("href"); continue; }
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+  }
+}
+
 function addMsg(role, text) {
   const wrap = document.createElement("div");
   wrap.className = "msg " + role;
   const b = document.createElement("div");
   b.className = "bubble";
-  b.textContent = text;
+  if (role === "assistant") renderMarkdown(b, text);
+  else b.textContent = text;
   wrap.appendChild(b);
   messagesEl.appendChild(wrap);
   scrollBottom();
@@ -322,6 +373,7 @@ async function send(text) {
     const reader = resp.body.getReader();
     const dec = new TextDecoder();
     let buf = "";
+    let mdBuf = "";
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -333,13 +385,15 @@ async function send(text) {
         if (!line.startsWith("data:")) continue;
         const chunk = JSON.parse(line.slice(5));
         if (chunk.type === "content" && chunk.delta) {
-          bubble.textContent += chunk.delta;
+          mdBuf += chunk.delta;
+          renderMarkdown(bubble, mdBuf);
           scrollBottom();
         } else if (chunk.type === "tool_call") {
           addChip(chips, chunk.tool_name, chunk.tool_args);
         } else if (chunk.type === "error") {
           bubble.classList.add("error");
-          bubble.textContent += "\n[出错] " + chunk.error;
+          mdBuf += "\n\n[出错] " + chunk.error;
+          renderMarkdown(bubble, mdBuf);
         }
       }
     }

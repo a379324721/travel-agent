@@ -7,6 +7,7 @@ import redis.asyncio as redis
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -117,7 +118,10 @@ def create_app() -> FastAPI:
     app.include_router(documents_routes.router, prefix="/api/v1")
     app.include_router(sessions_routes.router, prefix="/api/v1")
 
-    web_index = Path(__file__).resolve().parent.parent / "web" / "index.html"
+    web_dir = Path(__file__).resolve().parent.parent / "web"
+    web_index = web_dir / "index.html"
+    if web_dir.exists():
+        app.mount("/web", StaticFiles(directory=web_dir), name="web")
 
     @app.get("/", include_in_schema=False, response_model=None)
     async def root() -> FileResponse | dict[str, str]:
