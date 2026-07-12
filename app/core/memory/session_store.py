@@ -67,3 +67,15 @@ class RedisSessionStore:
     async def list_sessions(self, user_id: str) -> list[dict]:
         raw = await self._redis.get(self._index_key(user_id))
         return json.loads(raw) if raw else []
+
+    async def delete(self, session_id: str, user_id: str | None = None) -> None:
+        """删除会话消息；提供 user_id 时同步从其索引移除。"""
+        await self._redis.delete(self._key(session_id))
+        if not user_id:
+            return
+        raw = await self._redis.get(self._index_key(user_id))
+        items: list[dict] = json.loads(raw) if raw else []
+        remaining = [it for it in items if it.get("session_id") != session_id]
+        if len(remaining) != len(items):
+            payload = json.dumps(remaining, ensure_ascii=False)
+            await self._redis.set(self._index_key(user_id), payload, ex=self._ttl)

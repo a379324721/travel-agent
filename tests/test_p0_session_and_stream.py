@@ -21,6 +21,9 @@ class FakeRedis:
     async def set(self, key: str, value: str, ex: int | None = None) -> None:
         self.data[key] = value
 
+    async def delete(self, key: str) -> None:
+        self.data.pop(key, None)
+
 
 def _completion(content: str) -> Any:
     return SimpleNamespace(

@@ -31,3 +31,14 @@ async def session_messages(session_id: str, request: Request) -> dict:
         "session_id": session_id,
         "messages": [m.model_dump(mode="json", exclude_none=True) for m in messages],
     }
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(
+    session_id: str, request: Request, user_id: str | None = Query(None)
+) -> dict:
+    store = _store(request)
+    if store is None:
+        return {"session_id": session_id, "deleted": False}
+    await store.delete(session_id, user_id=user_id)
+    return {"session_id": session_id, "deleted": True}
