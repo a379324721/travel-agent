@@ -107,10 +107,19 @@ class TravelOrchestrator:
         return [ChatMessage(role=MessageRole(t.role), content=t.content) for t in memory.snapshot()]
 
     async def _persist_thread(
-        self, session_id: str | None, thread: list[ChatMessage]
+        self,
+        session_id: str | None,
+        thread: list[ChatMessage],
+        user_id: str | None = None,
     ) -> None:
-        if self._sessions is not None and session_id:
-            await self._sessions.replace(session_id, thread)
+        if self._sessions is None or not session_id:
+            return
+        await self._sessions.replace(session_id, thread)
+        if user_id:
+            title = next(
+                (m.content for m in thread if m.role == MessageRole.USER), "新会话"
+            )
+            await self._sessions.touch_session(user_id, session_id, title)
 
     def _tool_defs(self) -> list[dict[str, Any]]:
         return [
@@ -140,7 +149,8 @@ class TravelOrchestrator:
         logger.info(
             "intent.recognized", intent=result.intent.value, confidence=result.confidence
         )
-        if result.intent in (TravelIntent.POLICY, TravelIntent.RAG) and settings.llm_force_tool_choice:
+        is_policy = result.intent in (TravelIntent.POLICY, TravelIntent.RAG)
+        if is_policy and settings.llm_force_tool_choice:
             forced = {"type": "function", "function": {"name": "search_travel_policy_docs"}}
             return self._tool_defs(), forced
         return self._tool_defs(), "auto"
@@ -221,6 +231,7 @@ class TravelOrchestrator:
             await self._persist_thread(
                 session_id,
                 [*msgs, ChatMessage(role=MessageRole.ASSISTANT, content=content)],
+                user_id=user_id,
             )
             return {
                 "id": getattr(resp, "id", str(uuid.uuid4())),
@@ -337,6 +348,7 @@ class TravelOrchestrator:
             await self._persist_thread(
                 session_id,
                 [*msgs, ChatMessage(role=MessageRole.ASSISTANT, content=final)],
+                user_id=user_id,
             )
             yield StreamChunk(
                 type=StreamChunkType.DONE,

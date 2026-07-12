@@ -5,8 +5,8 @@ from pathlib import Path
 
 import redis.asyncio as redis
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -16,6 +16,7 @@ from app.agent.orchestrator import TravelOrchestrator
 from app.api.routes import chat as chat_routes
 from app.api.routes import documents as documents_routes
 from app.api.routes import health as health_routes
+from app.api.routes import sessions as sessions_routes
 from app.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.core.memory.session_store import RedisSessionStore
@@ -55,6 +56,7 @@ async def lifespan(app: FastAPI):
         )
     else:
         logger.warning("session_store.disabled", reason="redis unavailable")
+    app.state.session_store = session_store
 
     store = get_milvus_store()
     store.connect()
@@ -113,6 +115,7 @@ def create_app() -> FastAPI:
     app.include_router(health_routes.router, prefix="/api/v1")
     app.include_router(chat_routes.router, prefix="/api/v1")
     app.include_router(documents_routes.router, prefix="/api/v1")
+    app.include_router(sessions_routes.router, prefix="/api/v1")
 
     web_index = Path(__file__).resolve().parent.parent / "web" / "index.html"
 
