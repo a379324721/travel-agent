@@ -19,6 +19,9 @@ EXPECTED_TOOLS = {
     "search_hotels",
     "search_trains",
     "create_booking",
+    "submit_travel_approval",
+    "check_approval",
+    "submit_expense_report",
 }
 
 
@@ -134,10 +137,12 @@ async def test_create_booking_tool_returns_confirmation() -> None:
                 "create_booking",
                 json.dumps(
                     {
+                        "employee_id": "E001",
                         "booking_type": "flight",
                         "inventory_id": "CA1501",
                         "traveler_name": "王宁",
                         "contact_phone": "13800000000",
+                        "amount_cny": 1280,
                     }
                 ),
             ),

@@ -18,7 +18,9 @@ from app.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.core.memory.session_store import RedisSessionStore
 from app.core.rag.service import PolicyRAG
+from app.infrastructure.database.models import Base
 from app.infrastructure.database.session import create_async_pg_engine, create_session_factory
+from app.services.booking_store import PgBookingStore
 from app.services.milvus_store import get_milvus_store
 
 logger = get_logger(__name__)
@@ -60,13 +62,9 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("milvus.unavailable")
 
-    app.state.orchestrator = TravelOrchestrator(
-        session_store=session_store,
-        policy_rag=PolicyRAG(store, top_k=settings.rag_top_k),
-    )
-
     app.state.db_engine: AsyncEngine | None = None
     app.state.db_sessionmaker = None
+    booking_store = None
     try:
         app.state.db_engine = create_async_pg_engine(
             settings.database_url,
@@ -74,9 +72,18 @@ async def lifespan(app: FastAPI):
             max_overflow=10,
         )
         app.state.db_sessionmaker = create_session_factory(app.state.db_engine)
-        logger.info("database.engine_created")
+        async with app.state.db_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        booking_store = PgBookingStore(app.state.db_sessionmaker)
+        logger.info("database.ready", booking_store="postgres")
     except Exception as exc:
-        logger.warning("database.engine_failed", error=str(exc))
+        logger.warning("database.unavailable_fallback_memory", error=str(exc))
+
+    app.state.orchestrator = TravelOrchestrator(
+        session_store=session_store,
+        policy_rag=PolicyRAG(store, top_k=settings.rag_top_k),
+        booking_store=booking_store,
+    )
 
     yield
 

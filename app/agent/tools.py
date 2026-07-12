@@ -27,6 +27,8 @@ from app.domain.travel.models import (
     TripPurpose,
 )
 from app.domain.travel.policy import apply_policy_to_itinerary
+from app.services.approval import ApprovalService
+from app.services.booking_store import InMemoryBookingStore
 
 
 def _parse_date(s: str) -> date:
@@ -83,9 +85,15 @@ def _check_policy_schema() -> dict[str, Any]:
 
 
 def build_default_registry(
-    policy: TravelPolicy, rag: PolicyRAG | None = None
+    policy: TravelPolicy,
+    rag: PolicyRAG | None = None,
+    *,
+    approvals: ApprovalService | None = None,
+    booking_store: Any | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry()
+    approvals = approvals or ApprovalService()
+    booking_store = booking_store or InMemoryBookingStore()
 
     async def plan_travel_itinerary(**args: Any) -> str:
         req = TravelRequest(
@@ -141,7 +149,31 @@ def build_default_registry(
         return await search_trains(TrainSearchRequest(**args))
 
     async def create_booking_tool(**args: Any) -> dict[str, Any]:
-        return await create_booking(BookingRequest(**args))
+        employee_id = str(args.pop("employee_id"))
+        amount_cny = float(args.pop("amount_cny", 0) or 0)
+        result = await create_booking(BookingRequest(**args))
+        booking = result["booking"]
+        record = await booking_store.add_booking(
+            booking_id=booking["booking_id"],
+            employee_id=employee_id,
+            booking_type=args["booking_type"],
+            inventory_id=args["inventory_id"],
+            confirmation_code=booking["confirmation_code"],
+            amount_cny=amount_cny,
+        )
+        return {**result, "record": record}
+
+    async def submit_travel_approval(
+        employee_id: str, reason: str, estimated_total_cny: float
+    ) -> dict[str, Any]:
+        return approvals.create(employee_id, reason, float(estimated_total_cny))
+
+    async def check_approval(approval_id: str) -> dict[str, Any]:
+        ticket = approvals.query(approval_id)
+        return ticket or {"error": f"审批单 {approval_id} 不存在"}
+
+    async def submit_expense_report(employee_id: str) -> dict[str, Any]:
+        return await booking_store.create_reimbursement(employee_id)
 
     registry.register(
         "plan_travel_itinerary",
@@ -215,17 +247,62 @@ def build_default_registry(
     registry.register(
         "create_booking",
         create_booking_tool,
-        description="对已确认的搜索结果创建预订（当前为演示数据源，返回确认号）。",
+        description="对已确认的搜索结果创建预订并落库（当前为演示数据源，返回确认号）。"
+        "差标校验有超标警告或金额超审批线时，应先提交审批。",
         json_schema={
             "type": "object",
             "properties": {
+                "employee_id": {"type": "string", "description": "出差员工工号"},
                 "booking_type": {"type": "string", "enum": ["flight", "hotel", "train"]},
                 "inventory_id": {"type": "string", "description": "上游搜索结果中的库存标识"},
                 "traveler_name": {"type": "string"},
                 "contact_phone": {"type": "string"},
+                "amount_cny": {"type": "number", "description": "订单金额（元）"},
                 "policy_case_id": {"type": "string", "description": "差标校验/审批单号，可选"},
             },
-            "required": ["booking_type", "inventory_id", "traveler_name", "contact_phone"],
+            "required": [
+                "employee_id",
+                "booking_type",
+                "inventory_id",
+                "traveler_name",
+                "contact_phone",
+                "amount_cny",
+            ],
+        },
+    )
+    registry.register(
+        "submit_travel_approval",
+        submit_travel_approval,
+        description="金额超过事前审批线（或差标校验提示需审批）时，提交出差审批单。"
+        "当前为模拟 OA，自动通过。",
+        json_schema={
+            "type": "object",
+            "properties": {
+                "employee_id": {"type": "string"},
+                "reason": {"type": "string", "description": "出差事由与行程摘要"},
+                "estimated_total_cny": {"type": "number"},
+            },
+            "required": ["employee_id", "reason", "estimated_total_cny"],
+        },
+    )
+    registry.register(
+        "check_approval",
+        check_approval,
+        description="查询出差审批单状态。",
+        json_schema={
+            "type": "object",
+            "properties": {"approval_id": {"type": "string"}},
+            "required": ["approval_id"],
+        },
+    )
+    registry.register(
+        "submit_expense_report",
+        submit_expense_report,
+        description="一键报销：汇总该员工所有未报销订单生成报销单并提交（模拟财务系统）。",
+        json_schema={
+            "type": "object",
+            "properties": {"employee_id": {"type": "string"}},
+            "required": ["employee_id"],
         },
     )
     return registry

@@ -18,14 +18,19 @@ from app.core.tools.registry import ToolRegistry, invoke
 from app.domain.schemas import ChatMessage, MessageRole, StreamChunk, StreamChunkType
 from app.domain.travel.policy import default_corporate_policy
 from app.infrastructure.observability.metrics import get_metrics
+from app.services.approval import ApprovalService
+from app.services.employee_directory import EmployeeDirectory
 from app.services.llm import LLMService
 
 logger = get_logger(__name__)
 
-SYSTEM_PROMPT = """你是差旅助手「travel-agent」，帮助员工规划行程、解释差标与审批要求。
+SYSTEM_PROMPT = """你是差旅助手「travel-agent」，帮助员工完成差旅全流程：
+规划行程 → 差标校验 →（金额超审批线时先用 submit_travel_approval 提交审批）→
+create_booking 订票 → 行程结束后 submit_expense_report 一键报销。
 回答简洁专业，涉及金额与政策时标注「以公司制度为准」。必要时调用工具生成行程或校验差标。
 涉及公司差旅制度、差标额度、审批与报销政策的问题，
-先调用 search_travel_policy_docs 检索制度原文再作答。"""
+先调用 search_travel_policy_docs 检索制度原文再作答。
+系统提供「当前用户」信息时，直接使用其工号与职级调用工具，不要再向用户询问。"""
 
 
 def _to_openai_messages(messages: list[ChatMessage]) -> list[dict[str, Any]]:
@@ -38,6 +43,17 @@ def _to_openai_messages(messages: list[ChatMessage]) -> list[dict[str, Any]]:
             d["tool_call_id"] = m.tool_call_id
         out.append(d)
     return out
+
+
+def _identity_message(profile: Any) -> dict[str, Any]:
+    return {
+        "role": "system",
+        "content": (
+            f"当前用户：{profile.name}（工号 {profile.employee_id}），"
+            f"职级 {profile.grade.value}，部门 {profile.department}，"
+            f"联系电话 {profile.phone}。"
+        ),
+    }
 
 
 def _safe_json_args(arguments: str) -> dict[str, Any]:
@@ -56,12 +72,18 @@ class TravelOrchestrator:
         policy_rag: PolicyRAG | None = None,
         registry: ToolRegistry | None = None,
         intent_recognizer: IntentRecognizer | None = None,
+        directory: EmployeeDirectory | None = None,
+        approvals: ApprovalService | None = None,
+        booking_store: Any | None = None,
     ) -> None:
         self._llm = llm or LLMService()
         self._policy = default_corporate_policy()
         self._sessions = session_store
-        self._registry = registry or build_default_registry(self._policy, policy_rag)
+        self._registry = registry or build_default_registry(
+            self._policy, policy_rag, approvals=approvals, booking_store=booking_store
+        )
         self._recognizer = intent_recognizer or IntentRecognizer()
+        self._directory = directory or EmployeeDirectory()
         self._summarizer = MemorySummarizer(
             self._llm,
             token_threshold=settings.memory_summary_token_threshold,
@@ -138,10 +160,16 @@ class TravelOrchestrator:
         return json.dumps(result, ensure_ascii=False, default=str)
 
     async def run_completion(
-        self, messages: list[ChatMessage], session_id: str | None = None
+        self,
+        messages: list[ChatMessage],
+        session_id: str | None = None,
+        user_id: str | None = None,
     ) -> dict[str, Any]:
         msgs = await self._prepare_thread(messages, session_id)
         openai_msgs: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        profile = self._directory.get(user_id)
+        if profile is not None:
+            openai_msgs.append(_identity_message(profile))
         openai_msgs.extend(_to_openai_messages(msgs))
 
         metrics = get_metrics()
@@ -221,11 +249,17 @@ class TravelOrchestrator:
         }
 
     async def stream_completion(
-        self, messages: list[ChatMessage], session_id: str | None = None
+        self,
+        messages: list[ChatMessage],
+        session_id: str | None = None,
+        user_id: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """真流式：透传 LLM 增量输出；工具调用轮次发 TOOL_CALL 状态块。"""
         msgs = await self._prepare_thread(messages, session_id)
         openai_msgs: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        profile = self._directory.get(user_id)
+        if profile is not None:
+            openai_msgs.append(_identity_message(profile))
         openai_msgs.extend(_to_openai_messages(msgs))
 
         tools, tool_choice = await self._route(msgs)
