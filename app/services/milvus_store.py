@@ -100,6 +100,21 @@ class MilvusDocumentStore:
         )
         self._collection.flush()
 
+    def insert_chunks(self, rows: List[Dict[str, Any]]) -> None:
+        """批量写入分块。每行需含 id / title / doc_type / content / vector。"""
+        if not self._collection:
+            raise RuntimeError("Milvus not connected")
+        self._collection.insert(
+            [
+                [r["id"] for r in rows],
+                [r["title"][:512] for r in rows],
+                [r["doc_type"][:32] for r in rows],
+                [r["content"][:65530] for r in rows],
+                [r["vector"] for r in rows],
+            ]
+        )
+        self._collection.flush()
+
     def search(self, vector: List[float], top_k: int = 5) -> List[Dict[str, Any]]:
         if not self._collection:
             raise RuntimeError("Milvus not connected")

@@ -6,17 +6,14 @@ import hashlib
 import re
 from dataclasses import dataclass
 
-from openai import AsyncOpenAI
-
-from app.infrastructure.vector.milvus_client import MilvusVectorClient
+from app.services.embeddings import EmbeddingService
+from app.services.milvus_store import MilvusDocumentStore
 
 
 @dataclass(slots=True)
 class IngestionConfig:
     chunk_size: int = 800
     chunk_overlap: int = 120
-    embedding_model: str = "text-embedding-3-small"
-    default_intent: str = "general"
 
 
 def parse_plain_text(raw: str) -> str:
@@ -45,37 +42,42 @@ def stable_chunk_id(doc_id: str, index: int, content: str) -> str:
     return f"chk_{doc_id}_{h}"
 
 
-async def embed_openai(client: AsyncOpenAI, texts: list[str], *, model: str) -> list[list[float]]:
-    resp = await client.embeddings.create(model=model, input=texts)
-    return [list(d.embedding) for d in resp.data]
-
-
 class DocumentIngestionPipeline:
     """End-to-end ingestion into Milvus."""
 
     def __init__(
         self,
-        milvus: MilvusVectorClient,
-        embedder: AsyncOpenAI,
+        store: MilvusDocumentStore,
+        embedder: EmbeddingService,
         *,
         config: IngestionConfig | None = None,
     ) -> None:
-        self._milvus = milvus
+        self._store = store
         self._embedder = embedder
         self._cfg = config or IngestionConfig()
 
-    async def run(self, doc_id: str, raw_text: str, *, intent: str | None = None) -> int:
+    async def run(
+        self,
+        doc_id: str,
+        raw_text: str,
+        *,
+        title: str,
+        doc_type: str = "policy",
+    ) -> int:
         text = parse_plain_text(raw_text)
-        pieces = chunk_text(text, chunk_size=self._cfg.chunk_size, chunk_overlap=self._cfg.chunk_overlap)
+        pieces = chunk_text(text, chunk_size=self._cfg.chunk_size, overlap=self._cfg.chunk_overlap)
         if not pieces:
             return 0
-        intent_val = intent or self._cfg.default_intent
-        embeddings = await embed_openai(self._embedder, pieces, model=self._cfg.embedding_model)
-        chunk_ids = [stable_chunk_id(doc_id, i, p) for i, p in enumerate(pieces)]
-        await self._milvus.insert_vectors(
-            embeddings=embeddings,
-            texts=pieces,
-            chunk_ids=chunk_ids,
-            intents=[intent_val] * len(pieces),
-        )
-        return len(pieces)
+        embeddings = await self._embedder.embed_texts(pieces)
+        rows = [
+            {
+                "id": stable_chunk_id(doc_id, i, piece),
+                "title": title,
+                "doc_type": doc_type,
+                "content": piece,
+                "vector": vector,
+            }
+            for i, (piece, vector) in enumerate(zip(pieces, embeddings, strict=True))
+        ]
+        self._store.insert_chunks(rows)
+        return len(rows)

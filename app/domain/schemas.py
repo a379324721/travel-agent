@@ -75,6 +75,7 @@ class DocumentIngestResponse(BaseModel):
     collection: str
     inserted_at: datetime
     vector_dim: Optional[int] = None
+    chunks: Optional[int] = None
 
 
 class HealthStatus(BaseModel):

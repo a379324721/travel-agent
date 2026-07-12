@@ -7,7 +7,11 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Protocol, Sequence
 
-from app.infrastructure.vector.milvus_client import MilvusVectorClient
+
+class VectorSearchBackend(Protocol):
+    async def search_vectors(
+        self, embedding: list[float], *, top_k: int, intent_filter: str | None = None
+    ) -> list[dict[str, Any]]: ...
 
 
 class KeywordSearchBackend(Protocol):
@@ -41,7 +45,7 @@ class MultiChannelRetriever:
 
     def __init__(
         self,
-        milvus: MilvusVectorClient,
+        milvus: VectorSearchBackend,
         keyword_backend: KeywordSearchBackend,
         intent_backend: IntentIndexBackend,
         *,

@@ -18,6 +18,7 @@ from app.api.routes import health as health_routes
 from app.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.core.memory.session_store import RedisSessionStore
+from app.core.rag.service import PolicyRAG
 from app.services.milvus_store import get_milvus_store
 
 logger = get_logger(__name__)
@@ -50,7 +51,19 @@ async def lifespan(app: FastAPI):
         )
     else:
         logger.warning("session_store.disabled", reason="redis unavailable")
-    app.state.orchestrator = TravelOrchestrator(session_store=session_store)
+
+    store = get_milvus_store()
+    store.connect()
+    app.state.milvus = store
+    if store.connected:
+        logger.info("milvus.connected")
+    else:
+        logger.warning("milvus.unavailable")
+
+    app.state.orchestrator = TravelOrchestrator(
+        session_store=session_store,
+        policy_rag=PolicyRAG(store, top_k=settings.rag_top_k),
+    )
 
     app.state.db_engine: Optional[AsyncEngine] = None
     try:
@@ -63,14 +76,6 @@ async def lifespan(app: FastAPI):
         logger.info("database.engine_created")
     except Exception as exc:
         logger.warning("database.engine_failed", error=str(exc))
-
-    store = get_milvus_store()
-    store.connect()
-    app.state.milvus = store
-    if store.connected:
-        logger.info("milvus.connected")
-    else:
-        logger.warning("milvus.unavailable")
 
     yield
 

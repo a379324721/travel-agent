@@ -12,6 +12,7 @@ from app.config import settings
 from app.core.memory.session_store import RedisSessionStore
 from app.core.memory.short_term import ChatTurn, ShortTermMemory
 from app.core.memory.summary import MemorySummarizer
+from app.core.rag.service import PolicyRAG
 from app.domain.schemas import ChatMessage, MessageRole, StreamChunk, StreamChunkType
 from app.domain.travel.itinerary import build_draft_itinerary, summarize_itinerary_text
 from app.domain.travel.models import EmployeeGrade, TripPurpose, TravelRequest, TravelClass
@@ -19,7 +20,8 @@ from app.domain.travel.policy import apply_policy_to_itinerary, default_corporat
 from app.services.llm import LLMService
 
 SYSTEM_PROMPT = """你是差旅助手「travel-agent」，帮助员工规划行程、解释差标与审批要求。
-回答简洁专业，涉及金额与政策时标注「以公司制度为准」。必要时调用工具生成行程或校验差标。"""
+回答简洁专业，涉及金额与政策时标注「以公司制度为准」。必要时调用工具生成行程或校验差标。
+涉及公司差旅制度、差标额度、审批与报销政策的问题，先调用 search_travel_policy_docs 检索制度原文再作答。"""
 
 
 def _travel_tools() -> List[Dict[str, Any]]:
@@ -95,6 +97,20 @@ def _travel_tools() -> List[Dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "search_travel_policy_docs",
+                "description": "检索公司差旅制度文档，用于回答差标、审批、报销等政策问题。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "要查询的政策问题"},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
     ]
 
 
@@ -128,10 +144,12 @@ class TravelOrchestrator:
         self,
         llm: Optional[LLMService] = None,
         session_store: Optional[RedisSessionStore] = None,
+        policy_rag: Optional[PolicyRAG] = None,
     ) -> None:
         self._llm = llm or LLMService()
         self._policy = default_corporate_policy()
         self._sessions = session_store
+        self._rag = policy_rag
         self._summarizer = MemorySummarizer(
             self._llm,
             token_threshold=settings.memory_summary_token_threshold,
@@ -201,6 +219,11 @@ class TravelOrchestrator:
             pc = TravelClass(args["preferred_class"]) if args.get("preferred_class") else None
             checked = apply_policy_to_itinerary(self._policy, req, dummy, preferred_class=pc)
             return "差标校验结果：\n" + "\n".join(f"- {w}" for w in checked.policy_warnings)
+
+        if name == "search_travel_policy_docs":
+            if self._rag is None:
+                return "（知识库未配置，无法检索制度文档，请基于通用差旅常识回答并注明以公司制度为准。）"
+            return await self._rag.search_context(str(args.get("query", "")))
 
         return json.dumps({"error": f"unknown tool {name}"}, ensure_ascii=False)
 

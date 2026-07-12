@@ -16,3 +16,9 @@ class EmbeddingService:
     async def embed_text(self, text: str) -> list[float]:
         resp = await self._client.embeddings.create(model=self._model, input=text[:8000])
         return list(resp.data[0].embedding)
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        resp = await self._client.embeddings.create(
+            model=self._model, input=[t[:8000] for t in texts]
+        )
+        return [list(d.embedding) for d in resp.data]

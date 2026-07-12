@@ -4,9 +4,9 @@
 
 ## 功能
 
-- **对话与工具调用**：ReAct 风格多轮推理，内置行程草稿、差标校验等工具
-- **RAG**：文本嵌入（OpenAI Embeddings）写入 Milvus，支持相似度检索与重排
-- **对话记忆**：短期消息窗口 + 长对话摘要
+- **对话与工具调用**：ReAct 风格多轮推理，内置行程草稿、差标校验、制度文档检索等工具
+- **RAG**：文档分块（ETL）+ 嵌入写入 Milvus；对话中自动检索差旅制度原文作答
+- **对话记忆**：Redis 会话持久化（按 `session_id`）+ token 预算窗口 + 超长自动摘要
 - **工程化**：健康检查（Redis / PostgreSQL / Milvus）、熔断器、结构化日志、OpenTelemetry
 
 ## 架构
@@ -49,6 +49,12 @@ uv run uvicorn app.main:app --reload --port 8000
 
 依赖服务可用 Docker 一键起：`docker compose up -d postgres redis etcd minio milvus-standalone`
 
+差旅制度文档入库（`data/policies/`，需 Milvus 与 OpenAI 密钥）：
+
+```bash
+uv run python scripts/seed_policies.py
+```
+
 ## API
 
 | 方法 | 路径 | 说明 |
@@ -56,7 +62,7 @@ uv run uvicorn app.main:app --reload --port 8000
 | GET | `/` | 服务名与文档链接 |
 | GET | `/api/v1/health` | 依赖健康状态 |
 | POST | `/api/v1/chat` | 对话；`stream: true` 时返回 SSE |
-| POST | `/api/v1/documents/ingest` | 文档入库（需 Milvus） |
+| POST | `/api/v1/documents/ingest` | 文档分块入库（需 Milvus） |
 | GET | `/api/v1/documents/search` | 向量检索 |
 
 ### POST `/api/v1/chat`

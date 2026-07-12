@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     memory_summary_token_threshold: int = 6000
     session_ttl_seconds: int = 604800
 
+    # RAG config
+    rag_top_k: int = 5
+    rag_chunk_size: int = 800
+    rag_chunk_overlap: int = 120
+
     # Circuit breaker config
     circuit_breaker_failure_threshold: int = 5
     circuit_breaker_recovery_timeout: int = 30
