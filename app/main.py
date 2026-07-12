@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import redis.asyncio as redis
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
@@ -112,8 +114,12 @@ def create_app() -> FastAPI:
     app.include_router(chat_routes.router, prefix="/api/v1")
     app.include_router(documents_routes.router, prefix="/api/v1")
 
-    @app.get("/")
-    async def root() -> dict[str, str]:
+    web_index = Path(__file__).resolve().parent.parent / "web" / "index.html"
+
+    @app.get("/", include_in_schema=False, response_model=None)
+    async def root() -> FileResponse | dict[str, str]:
+        if web_index.exists():
+            return FileResponse(web_index, media_type="text/html")
         return {"service": settings.app_name, "docs": "/docs"}
 
     return app
