@@ -28,7 +28,9 @@ async def chat(
         async def event_gen() -> AsyncIterator[str]:
             idx = 0
             try:
-                async for chunk in orchestrator.stream_completion(body.messages):
+                async for chunk in orchestrator.stream_completion(
+                    body.messages, session_id=body.session_id
+                ):
                     payload = chunk.model_dump(mode="json")
                     yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
                     idx += 1
@@ -42,7 +44,9 @@ async def chat(
 
         return StreamingResponse(event_gen(), media_type="text/event-stream")
 
-    raw: dict[str, Any] = await orchestrator.run_completion(body.messages)
+    raw: dict[str, Any] = await orchestrator.run_completion(
+        body.messages, session_id=body.session_id
+    )
     return ChatResponse(
         id=raw["id"],
         created=raw["created"],

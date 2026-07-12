@@ -19,7 +19,9 @@ class Settings(BaseSettings):
     # Agent config
     max_react_iterations: int = 10
     memory_window_size: int = 20
-    memory_summary_threshold: int = 15
+    memory_max_tokens: int = 8000
+    memory_summary_token_threshold: int = 6000
+    session_ttl_seconds: int = 604800
 
     # Circuit breaker config
     circuit_breaker_failure_threshold: int = 5

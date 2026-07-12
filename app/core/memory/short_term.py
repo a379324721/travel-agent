@@ -6,9 +6,18 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Literal
 
-import tiktoken
+try:
+    import tiktoken
+except ImportError:
+    tiktoken = None
 
 Role = Literal["system", "user", "assistant", "tool"]
+
+
+def _approx_token_count(text: str) -> int:
+    """无 tiktoken 时的近似计数：CJK 每字约 1 token，其余每 4 字符约 1 token。"""
+    cjk = sum(1 for ch in text if "一" <= ch <= "鿿")
+    return cjk + (len(text) - cjk) // 4 + 1
 
 
 @dataclass(slots=True)
@@ -27,13 +36,15 @@ class ShortTermMemory:
         max_tokens: int = 8000,
         max_turns: int = 40,
     ) -> None:
-        self._enc = tiktoken.get_encoding(model_encoding)
+        self._enc = tiktoken.get_encoding(model_encoding) if tiktoken is not None else None
         self._max_tokens = max_tokens
         self._max_turns = max_turns
         self._turns: deque[ChatTurn] = deque()
 
     def _count_tokens(self, text: str) -> int:
-        return len(self._enc.encode(text))
+        if self._enc is not None:
+            return len(self._enc.encode(text))
+        return _approx_token_count(text)
 
     def total_tokens(self) -> int:
         return sum(self._count_tokens(t.content) for t in self._turns)

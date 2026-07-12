@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.core.memory.short_term import ChatTurn, ShortTermMemory
-from app.infrastructure.llm.client import ChatMessage, LLMClient
+from app.services.llm import LLMService
 
 
 @dataclass(slots=True)
@@ -19,7 +19,7 @@ class MemorySummarizer:
 
     def __init__(
         self,
-        llm: LLMClient,
+        llm: LLMService,
         *,
         token_threshold: int = 6000,
         summary_max_tokens: int = 512,
@@ -42,15 +42,16 @@ class MemorySummarizer:
             "使用中文要点列表。\n\n"
             f"{transcript}"
         )
-        out = await self._llm.chat(
+        resp = await self._llm.chat_completion(
             [
-                ChatMessage(role="system", content="你是对话摘要助手。"),
-                ChatMessage(role="user", content=prompt),
+                {"role": "system", "content": "你是对话摘要助手。"},
+                {"role": "user", "content": prompt},
             ],
             max_tokens=self._summary_max_tokens,
             temperature=0.1,
         )
+        text = resp.choices[0].message.content or ""
         memory.clear()
-        memory.extend([ChatTurn(role="system", content=f"[历史摘要]\n{out.content}")])
+        memory.extend([ChatTurn(role="system", content=f"[历史摘要]\n{text}")])
         memory.extend(recent)
-        return SummaryState(summary_text=out.content, covered_turns=len(older))
+        return SummaryState(summary_text=text, covered_turns=len(older))

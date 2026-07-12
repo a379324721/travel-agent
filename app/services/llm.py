@@ -32,6 +32,7 @@ class LLMService:
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = "auto",
         temperature: float = 0.2,
+        max_tokens: Optional[int] = None,
     ) -> Any:
         async def _call() -> Any:
             kwargs: dict[str, Any] = {
@@ -39,6 +40,8 @@ class LLMService:
                 "messages": messages,
                 "temperature": temperature,
             }
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
             if tools:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = tool_choice

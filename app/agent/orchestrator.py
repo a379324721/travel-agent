@@ -9,6 +9,9 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from app.config import settings
+from app.core.memory.session_store import RedisSessionStore
+from app.core.memory.short_term import ChatTurn, ShortTermMemory
+from app.core.memory.summary import MemorySummarizer
 from app.domain.schemas import ChatMessage, MessageRole, StreamChunk, StreamChunkType
 from app.domain.travel.itinerary import build_draft_itinerary, summarize_itinerary_text
 from app.domain.travel.models import EmployeeGrade, TripPurpose, TravelRequest, TravelClass
@@ -112,35 +115,50 @@ def _parse_date(s: str) -> date:
     return date(y, mo, d)
 
 
+def _safe_json_args(arguments: str) -> Dict[str, Any]:
+    try:
+        parsed = json.loads(arguments) if arguments else {}
+        return parsed if isinstance(parsed, dict) else {"value": parsed}
+    except json.JSONDecodeError:
+        return {"raw": arguments}
+
+
 class TravelOrchestrator:
-    def __init__(self, llm: Optional[LLMService] = None) -> None:
+    def __init__(
+        self,
+        llm: Optional[LLMService] = None,
+        session_store: Optional[RedisSessionStore] = None,
+    ) -> None:
         self._llm = llm or LLMService()
         self._policy = default_corporate_policy()
+        self._sessions = session_store
+        self._summarizer = MemorySummarizer(
+            self._llm,
+            token_threshold=settings.memory_summary_token_threshold,
+        )
 
-    async def _maybe_summarize_thread(self, messages: list[ChatMessage]) -> list[ChatMessage]:
-        if len(messages) <= settings.memory_summary_threshold:
-            return messages
-        head = messages[: -settings.memory_window_size]
-        tail = messages[-settings.memory_window_size :]
-        summary_req = [
-            {
-                "role": "system",
-                "content": "将下列对话压缩为不超过200字的中文摘要，保留城市、日期、政策与金额。",
-            },
-            {"role": "user", "content": "\n".join(f"{m.role.value}: {m.content}" for m in head)},
-        ]
-        summary = await self._llm.chat_completion(summary_req, temperature=0.0)
-        text = summary.choices[0].message.content or ""
-        merged: List[ChatMessage] = [
-            ChatMessage(role=MessageRole.SYSTEM, content=f"[历史摘要] {text}")
-        ]
-        merged.extend(tail)
-        return merged
+    async def _prepare_thread(
+        self, messages: list[ChatMessage], session_id: Optional[str]
+    ) -> list[ChatMessage]:
+        """历史加载 → 拼接本轮消息 → token 预算裁剪 → 超阈值时摘要压缩。"""
+        history: list[ChatMessage] = []
+        if self._sessions is not None and session_id:
+            history = await self._sessions.load(session_id)
+        memory = ShortTermMemory(
+            max_tokens=settings.memory_max_tokens,
+            max_turns=settings.memory_window_size,
+        )
+        memory.extend(
+            [ChatTurn(role=m.role.value, content=m.content) for m in [*history, *messages]]
+        )
+        await self._summarizer.maybe_compress(memory)
+        return [ChatMessage(role=MessageRole(t.role), content=t.content) for t in memory.snapshot()]
 
-    def _trim_window(self, messages: list[ChatMessage]) -> list[ChatMessage]:
-        if len(messages) <= settings.memory_window_size:
-            return messages
-        return messages[-settings.memory_window_size :]
+    async def _persist_thread(
+        self, session_id: Optional[str], thread: list[ChatMessage]
+    ) -> None:
+        if self._sessions is not None and session_id:
+            await self._sessions.replace(session_id, thread)
 
     async def _execute_tool(self, name: str, arguments: str) -> str:
         args: dict[str, Any] = json.loads(arguments) if arguments else {}
@@ -186,9 +204,10 @@ class TravelOrchestrator:
 
         return json.dumps({"error": f"unknown tool {name}"}, ensure_ascii=False)
 
-    async def run_completion(self, messages: list[ChatMessage]) -> dict[str, Any]:
-        msgs = await self._maybe_summarize_thread(messages)
-        msgs = self._trim_window(msgs)
+    async def run_completion(
+        self, messages: list[ChatMessage], session_id: Optional[str] = None
+    ) -> dict[str, Any]:
+        msgs = await self._prepare_thread(messages, session_id)
         openai_msgs: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
         openai_msgs.extend(_to_openai_messages(msgs))
 
@@ -227,6 +246,10 @@ class TravelOrchestrator:
                 continue
 
             content = msg.content or ""
+            await self._persist_thread(
+                session_id,
+                [*msgs, ChatMessage(role=MessageRole.ASSISTANT, content=content)],
+            )
             return {
                 "id": getattr(resp, "id", str(uuid.uuid4())),
                 "created": int(time.time()),
@@ -256,14 +279,94 @@ class TravelOrchestrator:
         }
 
     async def stream_completion(
-        self, messages: list[ChatMessage]
+        self, messages: list[ChatMessage], session_id: Optional[str] = None
     ) -> AsyncIterator[StreamChunk]:
-        result = await self.run_completion(messages)
-        text = result["choices"][0]["message"]["content"]
-        for i, ch in enumerate(text):
-            yield StreamChunk(type=StreamChunkType.CONTENT, index=i, delta=ch)
+        """真流式：透传 LLM 增量输出；工具调用轮次发 TOOL_CALL 状态块。"""
+        msgs = await self._prepare_thread(messages, session_id)
+        openai_msgs: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        openai_msgs.extend(_to_openai_messages(msgs))
+
+        tools = _travel_tools()
+        idx = 0
+        for _ in range(settings.max_react_iterations):
+            content_parts: list[str] = []
+            calls: dict[int, dict[str, str]] = {}
+            finish_reason: Optional[str] = None
+
+            async for chunk in self._llm.chat_completion_stream(
+                openai_msgs, tools=tools, tool_choice="auto"
+            ):
+                if not getattr(chunk, "choices", None):
+                    continue
+                choice = chunk.choices[0]
+                delta = choice.delta
+                if delta is None:
+                    continue
+                if delta.content:
+                    content_parts.append(delta.content)
+                    yield StreamChunk(
+                        type=StreamChunkType.CONTENT, index=idx, delta=delta.content
+                    )
+                    idx += 1
+                for tc in delta.tool_calls or []:
+                    acc = calls.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
+                    if tc.id:
+                        acc["id"] = tc.id
+                    fn = tc.function
+                    if fn is not None and fn.name:
+                        acc["name"] = fn.name
+                    if fn is not None and fn.arguments:
+                        acc["arguments"] += fn.arguments
+                if choice.finish_reason:
+                    finish_reason = choice.finish_reason
+
+            if calls:
+                ordered = [calls[i] for i in sorted(calls)]
+                openai_msgs.append(
+                    {
+                        "role": "assistant",
+                        "content": "".join(content_parts) or None,
+                        "tool_calls": [
+                            {
+                                "id": c["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": c["name"],
+                                    "arguments": c["arguments"] or "{}",
+                                },
+                            }
+                            for c in ordered
+                        ],
+                    }
+                )
+                for c in ordered:
+                    yield StreamChunk(
+                        type=StreamChunkType.TOOL_CALL,
+                        index=idx,
+                        tool_name=c["name"],
+                        tool_args=_safe_json_args(c["arguments"]),
+                    )
+                    idx += 1
+                    out = await self._execute_tool(c["name"], c["arguments"])
+                    openai_msgs.append(
+                        {"role": "tool", "tool_call_id": c["id"], "content": out}
+                    )
+                continue
+
+            final = "".join(content_parts)
+            await self._persist_thread(
+                session_id,
+                [*msgs, ChatMessage(role=MessageRole.ASSISTANT, content=final)],
+            )
+            yield StreamChunk(
+                type=StreamChunkType.DONE,
+                index=idx,
+                finish_reason=finish_reason or "stop",
+            )
+            return
+
         yield StreamChunk(
-            type=StreamChunkType.DONE,
-            index=len(text),
-            finish_reason="stop",
+            type=StreamChunkType.ERROR,
+            index=idx,
+            error="已达到最大推理轮次，请简化问题后重试。",
         )

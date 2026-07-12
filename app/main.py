@@ -17,6 +17,7 @@ from app.api.routes import documents as documents_routes
 from app.api.routes import health as health_routes
 from app.config import settings
 from app.core.logging import configure_logging, get_logger
+from app.core.memory.session_store import RedisSessionStore
 from app.services.milvus_store import get_milvus_store
 
 logger = get_logger(__name__)
@@ -33,8 +34,6 @@ async def lifespan(app: FastAPI):
     _setup_tracing()
     trace.get_tracer(__name__)
 
-    app.state.orchestrator = TravelOrchestrator()
-
     app.state.redis = None
     try:
         app.state.redis = redis.from_url(settings.redis_url, decode_responses=True)
@@ -43,6 +42,15 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("redis.unavailable", error=str(exc))
         app.state.redis = None
+
+    session_store = None
+    if app.state.redis is not None:
+        session_store = RedisSessionStore(
+            app.state.redis, ttl_seconds=settings.session_ttl_seconds
+        )
+    else:
+        logger.warning("session_store.disabled", reason="redis unavailable")
+    app.state.orchestrator = TravelOrchestrator(session_store=session_store)
 
     app.state.db_engine: Optional[AsyncEngine] = None
     try:
