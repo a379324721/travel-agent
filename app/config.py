@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o"
+    openai_embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 1536  # 需与 Milvus 集合维度一致
     database_url: str = "postgresql+asyncpg://user:pass@localhost:5432/travel_agent"
     redis_url: str = "redis://localhost:6379/0"
     milvus_host: str = "localhost"
@@ -17,6 +19,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Agent config
+    # 部分兼容端点（如 DashScope 思考模式）不支持强制指定 tool_choice 对象，可关掉退化为 auto
+    llm_force_tool_choice: bool = True
     max_react_iterations: int = 10
     memory_window_size: int = 20
     memory_max_tokens: int = 8000
