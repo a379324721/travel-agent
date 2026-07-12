@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from typing import Any, Union
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -22,7 +22,7 @@ async def chat(
     body: ChatRequest,
     request: Request,
     orchestrator: TravelOrchestrator = Depends(get_orchestrator),
-) -> Union[ChatResponse, StreamingResponse]:
+) -> ChatResponse | StreamingResponse:
     if body.stream:
 
         async def event_gen() -> AsyncIterator[str]:

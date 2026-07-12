@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
 
 from app.infrastructure.llm.circuit_breaker import CircuitBreaker
 from app.infrastructure.llm.client import ChatCompletionResult, ChatMessage, LLMClient

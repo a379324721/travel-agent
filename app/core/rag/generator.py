@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, Sequence
+from typing import Any, Protocol
 
 from app.core.rag.retriever import RetrievedChunk
 from app.infrastructure.llm.client import ChatMessage, LLMClient

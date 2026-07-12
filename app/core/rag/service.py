@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import Any
 
 from app.core.rag.retriever import MultiChannelRetriever
 from app.services.embeddings import EmbeddingService
@@ -54,7 +54,7 @@ class PolicyRAG:
     def __init__(
         self,
         store: MilvusDocumentStore,
-        embedder: Optional[EmbeddingService] = None,
+        embedder: EmbeddingService | None = None,
         *,
         top_k: int = 5,
     ) -> None:
@@ -84,6 +84,5 @@ class PolicyRAG:
             f"[{i + 1}]（{c.metadata.get('title') or '制度文档'}）{c.text}"
             for i, c in enumerate(chunks)
         ]
-        return "以下为公司差旅制度相关条款，请依据条款回答并注明「以公司制度为准」：\n" + "\n\n".join(
-            lines
-        )
+        header = "以下为公司差旅制度相关条款，请依据条款回答并注明「以公司制度为准」：\n"
+        return header + "\n\n".join(lines)

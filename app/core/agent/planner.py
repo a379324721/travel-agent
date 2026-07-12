@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, List, Optional, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -23,8 +24,8 @@ class PlanRunResult:
     """规划执行结果。"""
 
     goal: str
-    steps: List[str]
-    step_outputs: List[str] = field(default_factory=list)
+    steps: list[str]
+    step_outputs: list[str] = field(default_factory=list)
     summary: str = ""
 
 
@@ -41,7 +42,7 @@ class PlanningAgent:
         self,
         model: PlannerModel,
         *,
-        step_executor: Optional[StepExecutor] = None,
+        step_executor: StepExecutor | None = None,
     ) -> None:
         self._model = model
         self._executor = step_executor

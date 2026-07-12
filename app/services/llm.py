@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from collections.abc import AsyncIterator
+from typing import Any
 
 from openai import AsyncOpenAI
 
@@ -27,12 +28,12 @@ class LLMService:
 
     async def chat_completion(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         *,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = "auto",
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = "auto",
         temperature: float = 0.2,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
     ) -> Any:
         async def _call() -> Any:
             kwargs: dict[str, Any] = {
@@ -51,10 +52,10 @@ class LLMService:
 
     async def chat_completion_stream(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         *,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = "auto",
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = "auto",
         temperature: float = 0.2,
     ) -> AsyncIterator[Any]:
         kwargs: dict[str, Any] = {

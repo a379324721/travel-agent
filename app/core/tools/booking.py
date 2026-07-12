@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 from uuid import uuid4
@@ -38,7 +38,7 @@ async def create_booking(req: BookingRequest) -> dict[str, Any]:
         booking_id=bid,
         status="confirmed",
         confirmation_code=code,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     return {
         "ok": True,

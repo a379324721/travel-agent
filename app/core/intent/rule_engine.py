@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -118,7 +117,7 @@ class RuleEngine:
             ),
         ]
 
-    def classify(self, text: str) -> Optional[tuple[str, float]]:
+    def classify(self, text: str) -> tuple[str, float] | None:
         """
         对输入文本进行规则匹配。
 

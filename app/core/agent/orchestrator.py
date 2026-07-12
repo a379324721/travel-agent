@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol
 
-from app.core.agent.planner import PlanRunResult, PlanningAgent
+from app.core.agent.planner import PlanningAgent, PlanRunResult
 from app.core.agent.react_agent import ReActAgent, Tool, ToolResult
 from app.core.agent.reflection import ReflectionAgent
 from app.core.intent.recognizer import IntentRecognizer, IntentResult, TravelIntent
@@ -29,7 +29,8 @@ from app.core.prompt.templates import PromptTemplateLibrary
 from app.core.rag.generator import RAGAnswerGenerator
 from app.core.rag.retriever import MultiChannelRetriever, RetrievedChunk
 from app.core.tools import policy_query as policy_tool
-from app.core.tools.registry import ToolRegistry, invoke as registry_invoke
+from app.core.tools.registry import ToolRegistry
+from app.core.tools.registry import invoke as registry_invoke
 from app.infrastructure.llm.client import ChatMessage, LLMClient
 from app.infrastructure.observability.tracer import child_span, get_trace, start_trace
 

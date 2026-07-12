@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Dict, List
+from datetime import UTC, datetime
+from typing import Any
 
 from app.config import settings
 from app.core.logging import get_logger
@@ -85,7 +85,7 @@ class MilvusDocumentStore:
         title: str,
         doc_type: str,
         content: str,
-        vector: List[float],
+        vector: list[float],
     ) -> None:
         if not self._collection:
             raise RuntimeError("Milvus not connected")
@@ -100,7 +100,7 @@ class MilvusDocumentStore:
         )
         self._collection.flush()
 
-    def insert_chunks(self, rows: List[Dict[str, Any]]) -> None:
+    def insert_chunks(self, rows: list[dict[str, Any]]) -> None:
         """批量写入分块。每行需含 id / title / doc_type / content / vector。"""
         if not self._collection:
             raise RuntimeError("Milvus not connected")
@@ -115,7 +115,7 @@ class MilvusDocumentStore:
         )
         self._collection.flush()
 
-    def search(self, vector: List[float], top_k: int = 5) -> List[Dict[str, Any]]:
+    def search(self, vector: list[float], top_k: int = 5) -> list[dict[str, Any]]:
         if not self._collection:
             raise RuntimeError("Milvus not connected")
         self._collection.load()
@@ -126,9 +126,9 @@ class MilvusDocumentStore:
             limit=top_k,
             output_fields=["title", "doc_type", "content"],
         )
-        hits: List[Dict[str, Any]] = []
+        hits: list[dict[str, Any]] = []
         for hit in res[0]:
-            ent: Dict[str, Any] = {}
+            ent: dict[str, Any] = {}
             raw = getattr(hit, "entity", None)
             if raw is not None:
                 if hasattr(raw, "to_dict"):
@@ -158,7 +158,7 @@ def get_milvus_store() -> MilvusDocumentStore:
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def new_doc_id() -> str:

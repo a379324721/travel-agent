@@ -67,7 +67,8 @@ async def test_pipeline_chunks_and_inserts() -> None:
 async def test_policy_rag_formats_context() -> None:
     store = FakeStore(
         hits=[
-            {"id": "1", "content": "一线城市每晚不超过800元。", "score": 0.9, "title": "差旅管理制度"},
+            {"id": "1", "content": "一线城市每晚不超过800元。", "score": 0.9,
+             "title": "差旅管理制度"},
             {"id": "2", "content": "STAFF 限经济舱。", "score": 0.8, "title": "差旅管理制度"},
         ]
     )
@@ -132,7 +133,8 @@ class FakeLLM:
 
 async def test_chat_policy_tool_returns_rag_context() -> None:
     store = FakeStore(
-        hits=[{"id": "1", "content": "单次超5000元需OA事前审批。", "score": 0.9, "title": "差旅管理制度"}]
+        hits=[{"id": "1", "content": "单次超5000元需OA事前审批。", "score": 0.9,
+               "title": "差旅管理制度"}]
     )
     rag = PolicyRAG(store, embedder=FakeEmbedder())  # type: ignore[arg-type]
     llm = FakeLLM(

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import Optional
 
 from app.domain.travel.models import (
     CabinRule,
@@ -13,7 +12,6 @@ from app.domain.travel.models import (
     TravelPolicy,
     TravelRequest,
 )
-
 
 _CLASS_ORDER: list[TravelClass] = [
     TravelClass.ECONOMY,
@@ -67,7 +65,7 @@ def resolve_city_tier(destination_city: str) -> str:
 def evaluate_cabin_compliance(
     policy: TravelPolicy,
     request: TravelRequest,
-    preferred: Optional[TravelClass],
+    preferred: TravelClass | None,
 ) -> list[str]:
     warnings: list[str] = []
     rule = policy.cabin_rules.get(request.grade)
@@ -108,7 +106,7 @@ def apply_policy_to_itinerary(
     request: TravelRequest,
     itinerary: Itinerary,
     *,
-    preferred_class: Optional[TravelClass] = None,
+    preferred_class: TravelClass | None = None,
 ) -> Itinerary:
     merged = list(itinerary.policy_warnings)
     merged.extend(evaluate_cabin_compliance(policy, request, preferred_class))

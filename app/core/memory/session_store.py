@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 from app.domain.schemas import ChatMessage
 
@@ -24,7 +24,7 @@ class RedisSessionStore:
         return f"session:{session_id}:messages"
 
     async def load(self, session_id: str) -> list[ChatMessage]:
-        raw: Optional[str] = await self._redis.get(self._key(session_id))
+        raw: str | None = await self._redis.get(self._key(session_id))
         if not raw:
             return []
         return [ChatMessage.model_validate(m) for m in json.loads(raw)]

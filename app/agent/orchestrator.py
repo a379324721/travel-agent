@@ -4,118 +4,31 @@ import json
 import time
 import uuid
 from collections.abc import AsyncIterator
-from datetime import date
-from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any
 
+from app.agent.tools import build_default_registry
 from app.config import settings
+from app.core.intent.recognizer import IntentRecognizer, TravelIntent
+from app.core.logging import get_logger
 from app.core.memory.session_store import RedisSessionStore
 from app.core.memory.short_term import ChatTurn, ShortTermMemory
 from app.core.memory.summary import MemorySummarizer
 from app.core.rag.service import PolicyRAG
+from app.core.tools.registry import ToolRegistry, invoke
 from app.domain.schemas import ChatMessage, MessageRole, StreamChunk, StreamChunkType
-from app.domain.travel.itinerary import build_draft_itinerary, summarize_itinerary_text
-from app.domain.travel.models import EmployeeGrade, TripPurpose, TravelRequest, TravelClass
-from app.domain.travel.policy import apply_policy_to_itinerary, default_corporate_policy
+from app.domain.travel.policy import default_corporate_policy
 from app.services.llm import LLMService
+
+logger = get_logger(__name__)
 
 SYSTEM_PROMPT = """你是差旅助手「travel-agent」，帮助员工规划行程、解释差标与审批要求。
 回答简洁专业，涉及金额与政策时标注「以公司制度为准」。必要时调用工具生成行程或校验差标。
-涉及公司差旅制度、差标额度、审批与报销政策的问题，先调用 search_travel_policy_docs 检索制度原文再作答。"""
+涉及公司差旅制度、差标额度、审批与报销政策的问题，
+先调用 search_travel_policy_docs 检索制度原文再作答。"""
 
 
-def _travel_tools() -> List[Dict[str, Any]]:
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": "plan_travel_itinerary",
-                "description": "根据结构化差旅需求生成草稿行程与费用预估。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "employee_id": {"type": "string"},
-                        "grade": {
-                            "type": "string",
-                            "enum": [g.value for g in EmployeeGrade],
-                        },
-                        "origin_city": {"type": "string"},
-                        "destination_city": {"type": "string"},
-                        "departure_date": {"type": "string", "description": "YYYY-MM-DD"},
-                        "return_date": {"type": "string", "description": "YYYY-MM-DD，可选"},
-                        "purpose": {
-                            "type": "string",
-                            "enum": [p.value for p in TripPurpose],
-                        },
-                        "preferred_class": {
-                            "type": "string",
-                            "enum": [c.value for c in TravelClass],
-                        },
-                    },
-                    "required": [
-                        "employee_id",
-                        "grade",
-                        "origin_city",
-                        "destination_city",
-                        "departure_date",
-                        "purpose",
-                    ],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "check_travel_policy",
-                "description": "对已有行程草稿执行差标校验（舱位、预算、提前预订等）。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "employee_id": {"type": "string"},
-                        "grade": {
-                            "type": "string",
-                            "enum": [g.value for g in EmployeeGrade],
-                        },
-                        "origin_city": {"type": "string"},
-                        "destination_city": {"type": "string"},
-                        "departure_date": {"type": "string"},
-                        "return_date": {"type": "string"},
-                        "estimated_total_cny": {"type": "number"},
-                        "preferred_class": {
-                            "type": "string",
-                            "enum": [c.value for c in TravelClass],
-                        },
-                    },
-                    "required": [
-                        "employee_id",
-                        "grade",
-                        "origin_city",
-                        "destination_city",
-                        "departure_date",
-                        "estimated_total_cny",
-                    ],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "search_travel_policy_docs",
-                "description": "检索公司差旅制度文档，用于回答差标、审批、报销等政策问题。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "要查询的政策问题"},
-                    },
-                    "required": ["query"],
-                },
-            },
-        },
-    ]
-
-
-def _to_openai_messages(messages: List[ChatMessage]) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _to_openai_messages(messages: list[ChatMessage]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     for m in messages:
         d: dict[str, Any] = {"role": m.role.value, "content": m.content}
         if m.name:
@@ -126,12 +39,7 @@ def _to_openai_messages(messages: List[ChatMessage]) -> List[Dict[str, Any]]:
     return out
 
 
-def _parse_date(s: str) -> date:
-    y, mo, d = (int(x) for x in s.split("-", 2))
-    return date(y, mo, d)
-
-
-def _safe_json_args(arguments: str) -> Dict[str, Any]:
+def _safe_json_args(arguments: str) -> dict[str, Any]:
     try:
         parsed = json.loads(arguments) if arguments else {}
         return parsed if isinstance(parsed, dict) else {"value": parsed}
@@ -142,21 +50,24 @@ def _safe_json_args(arguments: str) -> Dict[str, Any]:
 class TravelOrchestrator:
     def __init__(
         self,
-        llm: Optional[LLMService] = None,
-        session_store: Optional[RedisSessionStore] = None,
-        policy_rag: Optional[PolicyRAG] = None,
+        llm: LLMService | None = None,
+        session_store: RedisSessionStore | None = None,
+        policy_rag: PolicyRAG | None = None,
+        registry: ToolRegistry | None = None,
+        intent_recognizer: IntentRecognizer | None = None,
     ) -> None:
         self._llm = llm or LLMService()
         self._policy = default_corporate_policy()
         self._sessions = session_store
-        self._rag = policy_rag
+        self._registry = registry or build_default_registry(self._policy, policy_rag)
+        self._recognizer = intent_recognizer or IntentRecognizer()
         self._summarizer = MemorySummarizer(
             self._llm,
             token_threshold=settings.memory_summary_token_threshold,
         )
 
     async def _prepare_thread(
-        self, messages: list[ChatMessage], session_id: Optional[str]
+        self, messages: list[ChatMessage], session_id: str | None
     ) -> list[ChatMessage]:
         """历史加载 → 拼接本轮消息 → token 预算裁剪 → 超阈值时摘要压缩。"""
         history: list[ChatMessage] = []
@@ -173,75 +84,72 @@ class TravelOrchestrator:
         return [ChatMessage(role=MessageRole(t.role), content=t.content) for t in memory.snapshot()]
 
     async def _persist_thread(
-        self, session_id: Optional[str], thread: list[ChatMessage]
+        self, session_id: str | None, thread: list[ChatMessage]
     ) -> None:
         if self._sessions is not None and session_id:
             await self._sessions.replace(session_id, thread)
 
+    def _tool_defs(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.json_schema or {"type": "object", "properties": {}},
+                },
+            }
+            for t in self._registry.list_tools()
+        ]
+
+    async def _route(
+        self, messages: list[ChatMessage]
+    ) -> tuple[list[dict[str, Any]] | None, Any]:
+        """意图路由：闲聊不带工具；政策类问题首轮强制检索制度文档。"""
+        last_user = next(
+            (m.content for m in reversed(messages) if m.role == MessageRole.USER), ""
+        )
+        result = await self._recognizer.recognize(last_user)
+        logger.info(
+            "intent.recognized", intent=result.intent.value, confidence=result.confidence
+        )
+        if result.intent is TravelIntent.GENERAL:
+            return None, None
+        if result.intent in (TravelIntent.POLICY, TravelIntent.RAG):
+            forced = {"type": "function", "function": {"name": "search_travel_policy_docs"}}
+            return self._tool_defs(), forced
+        return self._tool_defs(), "auto"
+
     async def _execute_tool(self, name: str, arguments: str) -> str:
-        args: dict[str, Any] = json.loads(arguments) if arguments else {}
-
-        if name == "plan_travel_itinerary":
-            req = TravelRequest(
-                request_id=str(uuid.uuid4()),
-                employee_id=args["employee_id"],
-                grade=EmployeeGrade(args["grade"]),
-                origin_city=args["origin_city"],
-                destination_city=args["destination_city"],
-                departure_date=_parse_date(args["departure_date"]),
-                return_date=_parse_date(args["return_date"]) if args.get("return_date") else None,
-                purpose=TripPurpose(args["purpose"]),
-                preferred_class=TravelClass(args["preferred_class"])
-                if args.get("preferred_class")
-                else None,
-            )
-            it = build_draft_itinerary(req)
-            pc = req.preferred_class
-            it = apply_policy_to_itinerary(self._policy, req, it, preferred_class=pc)
-            return summarize_itinerary_text(it)
-
-        if name == "check_travel_policy":
-            dep = _parse_date(args["departure_date"])
-            ret = _parse_date(args["return_date"]) if args.get("return_date") else None
-            req = TravelRequest(
-                request_id=str(uuid.uuid4()),
-                employee_id=args["employee_id"],
-                grade=EmployeeGrade(args["grade"]),
-                origin_city=args["origin_city"],
-                destination_city=args["destination_city"],
-                departure_date=dep,
-                return_date=ret,
-                purpose=TripPurpose.CLIENT,
-            )
-            dummy = build_draft_itinerary(req)
-            total = Decimal(str(args["estimated_total_cny"]))
-            dummy = dummy.model_copy(update={"total_estimated_cny": total})
-            pc = TravelClass(args["preferred_class"]) if args.get("preferred_class") else None
-            checked = apply_policy_to_itinerary(self._policy, req, dummy, preferred_class=pc)
-            return "差标校验结果：\n" + "\n".join(f"- {w}" for w in checked.policy_warnings)
-
-        if name == "search_travel_policy_docs":
-            if self._rag is None:
-                return "（知识库未配置，无法检索制度文档，请基于通用差旅常识回答并注明以公司制度为准。）"
-            return await self._rag.search_context(str(args.get("query", "")))
-
-        return json.dumps({"error": f"unknown tool {name}"}, ensure_ascii=False)
+        if not self._registry.has(name):
+            return json.dumps({"error": f"unknown tool {name}"}, ensure_ascii=False)
+        try:
+            result = await invoke(self._registry, name, _safe_json_args(arguments))
+        except Exception as exc:
+            return json.dumps({"error": str(exc)}, ensure_ascii=False)
+        if isinstance(result, str):
+            return result
+        return json.dumps(result, ensure_ascii=False, default=str)
 
     async def run_completion(
-        self, messages: list[ChatMessage], session_id: Optional[str] = None
+        self, messages: list[ChatMessage], session_id: str | None = None
     ) -> dict[str, Any]:
         msgs = await self._prepare_thread(messages, session_id)
-        openai_msgs: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        openai_msgs: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
         openai_msgs.extend(_to_openai_messages(msgs))
 
-        tools = _travel_tools()
+        tools, tool_choice = await self._route(msgs)
         for _ in range(settings.max_react_iterations):
-            resp = await self._llm.chat_completion(openai_msgs, tools=tools, tool_choice="auto")
+            round_tool_choice = tool_choice
+            tool_choice = "auto"
+            resp = await self._llm.chat_completion(
+                openai_msgs, tools=tools, tool_choice=round_tool_choice
+            )
             choice = resp.choices[0]
             msg = choice.message
 
             if msg.tool_calls:
-                assistant_msg: Dict[str, Any] = {
+                assistant_msg: dict[str, Any] = {
                     "role": "assistant",
                     "content": msg.content,
                     "tool_calls": [
@@ -302,22 +210,24 @@ class TravelOrchestrator:
         }
 
     async def stream_completion(
-        self, messages: list[ChatMessage], session_id: Optional[str] = None
+        self, messages: list[ChatMessage], session_id: str | None = None
     ) -> AsyncIterator[StreamChunk]:
         """真流式：透传 LLM 增量输出；工具调用轮次发 TOOL_CALL 状态块。"""
         msgs = await self._prepare_thread(messages, session_id)
-        openai_msgs: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        openai_msgs: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
         openai_msgs.extend(_to_openai_messages(msgs))
 
-        tools = _travel_tools()
+        tools, tool_choice = await self._route(msgs)
         idx = 0
         for _ in range(settings.max_react_iterations):
+            round_tool_choice = tool_choice
+            tool_choice = "auto"
             content_parts: list[str] = []
             calls: dict[int, dict[str, str]] = {}
-            finish_reason: Optional[str] = None
+            finish_reason: str | None = None
 
             async for chunk in self._llm.chat_completion_stream(
-                openai_msgs, tools=tools, tool_choice="auto"
+                openai_msgs, tools=tools, tool_choice=round_tool_choice
             ):
                 if not getattr(chunk, "choices", None):
                     continue

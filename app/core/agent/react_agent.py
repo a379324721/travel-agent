@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
 
@@ -19,7 +20,7 @@ class ToolResult:
     name: str
     ok: bool
     data: Any
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @runtime_checkable
@@ -38,7 +39,7 @@ class ReActStep:
     thought: str
     action: str
     action_input: dict[str, Any]
-    final_answer: Optional[str] = None
+    final_answer: str | None = None
 
 
 @runtime_checkable

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
-from app.core.intent.llm_classifier import LLMClassification, LLMIntentClassifier, StructuredLLMClient
+from app.core.intent.llm_classifier import (
+    LLMClassification,
+    LLMIntentClassifier,
+)
 from app.core.intent.rule_engine import RuleEngine
 
 
@@ -55,15 +58,13 @@ class IntentResult:
 
 
 class StructuredLLMBridge:
-    """将 `LLMClient` 适配为 `StructuredLLMClient`（依赖提示词约束 JSON 输出）。"""
+    """将主线 `LLMService` 适配为 `StructuredLLMClient`（依赖提示词约束 JSON 输出）。"""
 
     def __init__(self, client: Any, *, model: str | None = None) -> None:
-        from app.infrastructure.llm.client import LLMClient
-
-        if not isinstance(client, LLMClient):
-            raise TypeError("client must be LLMClient")
+        if not hasattr(client, "chat_completion"):
+            raise TypeError("client must provide chat_completion()")
         self._client = client
-        self._model = model
+        self._model = model  # 预留：LLMService 当前使用自身配置的模型
 
     async def complete_structured(
         self,
@@ -72,20 +73,16 @@ class StructuredLLMBridge:
         user_content: str,
         response_format: str,
     ) -> str:
-        from app.infrastructure.llm.client import ChatMessage
-
         _ = response_format
-        messages = [
-            ChatMessage(role="system", content=system_prompt),
-            ChatMessage(role="user", content=user_content),
-        ]
-        result = await self._client.chat(
-            messages,
-            model=self._model,
+        resp = await self._client.chat_completion(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
             temperature=0.0,
             max_tokens=512,
         )
-        return result.content
+        return resp.choices[0].message.content or ""
 
 
 class IntentRecognizer:
@@ -128,8 +125,8 @@ class IntentRecognizer:
 
     def _merge(
         self,
-        fast: Optional[tuple[str, float]],
-        slow: Optional[LLMClassification],
+        fast: tuple[str, float] | None,
+        slow: LLMClassification | None,
     ) -> IntentResult:
         if slow is None and fast is None:
             return IntentResult(

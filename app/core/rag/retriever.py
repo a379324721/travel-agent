@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol, Sequence
+from typing import Any, Protocol
 
 
 class VectorSearchBackend(Protocol):
@@ -36,7 +37,7 @@ class RetrievedChunk:
 
     @property
     def fingerprint(self) -> str:
-        payload = f"{self.chunk_id}|{self.text}".encode("utf-8")
+        payload = f"{self.chunk_id}|{self.text}".encode()
         return hashlib.sha256(payload).hexdigest()[:32]
 
 

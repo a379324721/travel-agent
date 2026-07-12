@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -37,7 +38,7 @@ class ReflectionAgent:
         self,
         draft: str,
         *,
-        criteria: Optional[Mapping[str, Any]] = None,
+        criteria: Mapping[str, Any] | None = None,
         strict: bool = False,
     ) -> ReflectionOutcome:
         criteria = criteria or {"合规": "符合公司差标", "完整性": "覆盖用户问题要点"}

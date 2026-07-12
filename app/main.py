@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import Optional
 
 import redis.asyncio as redis
 from fastapi import FastAPI
@@ -65,7 +64,7 @@ async def lifespan(app: FastAPI):
         policy_rag=PolicyRAG(store, top_k=settings.rag_top_k),
     )
 
-    app.state.db_engine: Optional[AsyncEngine] = None
+    app.state.db_engine: AsyncEngine | None = None
     try:
         app.state.db_engine = create_async_engine(
             settings.database_url,

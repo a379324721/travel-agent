@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -17,15 +17,15 @@ class MessageRole(str, Enum):
 class ChatMessage(BaseModel):
     role: MessageRole
     content: str
-    name: Optional[str] = None
-    tool_call_id: Optional[str] = None
+    name: str | None = None
+    tool_call_id: str | None = None
 
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(..., min_length=1, description="对话消息列表")
     stream: bool = False
-    session_id: Optional[str] = Field(None, description="会话 ID，用于记忆与审计")
-    user_id: Optional[str] = Field(None, description="企业用户标识")
+    session_id: str | None = Field(None, description="会话 ID，用于记忆与审计")
+    user_id: str | None = Field(None, description="企业用户标识")
     locale: str = Field("zh-CN", description="语言区域")
 
 
@@ -41,8 +41,8 @@ class ChatResponse(BaseModel):
     created: int
     model: str
     choices: list[dict[str, Any]]
-    usage: Optional[dict[str, int]] = None
-    session_id: Optional[str] = None
+    usage: dict[str, int] | None = None
+    session_id: str | None = None
     tool_calls: list[ToolCallInfo] = Field(default_factory=list)
 
 
@@ -56,11 +56,11 @@ class StreamChunkType(str, Enum):
 class StreamChunk(BaseModel):
     type: StreamChunkType
     index: int = 0
-    delta: Optional[str] = None
-    tool_name: Optional[str] = None
-    tool_args: Optional[dict[str, Any]] = None
-    finish_reason: Optional[str] = None
-    error: Optional[str] = None
+    delta: str | None = None
+    tool_name: str | None = None
+    tool_args: dict[str, Any] | None = None
+    finish_reason: str | None = None
+    error: str | None = None
 
 
 class DocumentIngestRequest(BaseModel):
@@ -74,12 +74,12 @@ class DocumentIngestResponse(BaseModel):
     doc_id: str
     collection: str
     inserted_at: datetime
-    vector_dim: Optional[int] = None
-    chunks: Optional[int] = None
+    vector_dim: int | None = None
+    chunks: int | None = None
 
 
 class HealthStatus(BaseModel):
     status: Literal["ok", "degraded", "unhealthy"]
     version: str = "0.1.0"
     checks: dict[str, bool] = Field(default_factory=dict)
-    detail: Optional[str] = None
+    detail: str | None = None

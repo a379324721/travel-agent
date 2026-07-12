@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -37,13 +37,13 @@ class TravelRequest(BaseModel):
     origin_city: str
     destination_city: str
     departure_date: date
-    return_date: Optional[date] = None
+    return_date: date | None = None
     purpose: TripPurpose
     passenger_count: int = Field(1, ge=1, le=9)
-    preferred_class: Optional[TravelClass] = None
-    budget_ceiling_cny: Optional[Decimal] = None
+    preferred_class: TravelClass | None = None
+    budget_ceiling_cny: Decimal | None = None
     needs_approval: bool = False
-    extra_notes: Optional[str] = None
+    extra_notes: str | None = None
 
 
 class Segment(BaseModel):
@@ -52,9 +52,9 @@ class Segment(BaseModel):
     to_city: str
     depart_local: datetime
     arrive_local: datetime
-    carrier: Optional[str] = None
+    carrier: str | None = None
     transport: Literal["flight", "train", "hotel", "ground"] = "flight"
-    booking_ref: Optional[str] = None
+    booking_ref: str | None = None
 
 
 class Itinerary(BaseModel):
@@ -64,7 +64,7 @@ class Itinerary(BaseModel):
     segments: list[Segment] = Field(default_factory=list)
     total_estimated_cny: Decimal = Decimal("0")
     policy_warnings: list[str] = Field(default_factory=list)
-    created_at: Optional[datetime] = None
+    created_at: datetime | None = None
 
 
 class CabinRule(BaseModel):
@@ -101,5 +101,5 @@ class Booking(BaseModel):
     status: BookingStatus
     total_amount_cny: Decimal
     vendor: str
-    booked_at: Optional[datetime] = None
+    booked_at: datetime | None = None
     raw_payload: dict[str, Any] = Field(default_factory=dict)

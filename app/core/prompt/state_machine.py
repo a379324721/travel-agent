@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import re
 from enum import Enum
-from typing import Optional
 
 from app.core.intent.recognizer import BusinessIntent  # 与 TravelIntent 同义，供状态迁移使用
 
@@ -45,7 +44,7 @@ class PromptStateMachine:
     def transition(
         self,
         user_text: str,
-        intent: Optional[BusinessIntent] = None,
+        intent: BusinessIntent | None = None,
     ) -> ConversationState:
         """
         根据用户文本与（可选）意图更新内部状态并返回新状态。
@@ -59,7 +58,7 @@ class PromptStateMachine:
         self,
         current: ConversationState,
         text: str,
-        intent: Optional[BusinessIntent],
+        intent: BusinessIntent | None,
     ) -> ConversationState:
         if not text:
             return current
