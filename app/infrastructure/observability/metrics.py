@@ -62,3 +62,14 @@ class MetricsCollector:
                 self.observe_latency_ms(name, (time.perf_counter() - start) * 1000.0)
 
         return _Ctx()
+
+
+_global_collector: MetricsCollector | None = None
+
+
+def get_metrics() -> MetricsCollector:
+    """进程级单例，orchestrator 与路由共用同一收集器。"""
+    global _global_collector
+    if _global_collector is None:
+        _global_collector = MetricsCollector()
+    return _global_collector

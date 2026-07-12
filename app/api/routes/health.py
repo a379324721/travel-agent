@@ -5,8 +5,15 @@ from typing import Any
 from fastapi import APIRouter, Request
 
 from app.domain.schemas import HealthStatus
+from app.infrastructure.observability.metrics import get_metrics
 
 router = APIRouter(tags=["health"])
+
+
+@router.get("/metrics")
+async def metrics() -> dict[str, Any]:
+    """运行指标快照：请求/工具计数、token 用量、延迟 p50。"""
+    return get_metrics().snapshot()
 
 
 @router.get("/health", response_model=HealthStatus)

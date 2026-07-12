@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 
 from app.core.rag.retriever import MultiChannelRetriever, RetrievedChunk
-from app.infrastructure.vector.milvus_client import MilvusVectorClient
+
+
+class VectorBackendStub:
+    async def search_vectors(
+        self, embedding: list[float], *, top_k: int, intent_filter: str | None = None
+    ) -> list[dict]:
+        return [{"id": "a", "text": "dup text", "score": 0.9}]
 
 
 @pytest.mark.asyncio
 async def test_retriever_merges_and_dedupes() -> None:
-    mc = MagicMock(spec=MilvusVectorClient)
-    mc.search_vectors = AsyncMock(
-        return_value=[{"id": "a", "text": "dup text", "score": 0.9}]
-    )
+    mc = VectorBackendStub()
 
     class KwBackend:
         async def search(self, q: str, *, top_k: int) -> list[dict]:

@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.agent.orchestrator import TravelOrchestrator
 from app.api.routes import chat as chat_routes
@@ -18,6 +18,7 @@ from app.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.core.memory.session_store import RedisSessionStore
 from app.core.rag.service import PolicyRAG
+from app.infrastructure.database.session import create_async_pg_engine, create_session_factory
 from app.services.milvus_store import get_milvus_store
 
 logger = get_logger(__name__)
@@ -65,13 +66,14 @@ async def lifespan(app: FastAPI):
     )
 
     app.state.db_engine: AsyncEngine | None = None
+    app.state.db_sessionmaker = None
     try:
-        app.state.db_engine = create_async_engine(
+        app.state.db_engine = create_async_pg_engine(
             settings.database_url,
-            pool_pre_ping=True,
             pool_size=5,
             max_overflow=10,
         )
+        app.state.db_sessionmaker = create_session_factory(app.state.db_engine)
         logger.info("database.engine_created")
     except Exception as exc:
         logger.warning("database.engine_failed", error=str(exc))

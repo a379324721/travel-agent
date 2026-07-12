@@ -17,6 +17,7 @@ from app.core.rag.service import PolicyRAG
 from app.core.tools.registry import ToolRegistry, invoke
 from app.domain.schemas import ChatMessage, MessageRole, StreamChunk, StreamChunkType
 from app.domain.travel.policy import default_corporate_policy
+from app.infrastructure.observability.metrics import get_metrics
 from app.services.llm import LLMService
 
 logger = get_logger(__name__)
@@ -121,12 +122,17 @@ class TravelOrchestrator:
         return self._tool_defs(), "auto"
 
     async def _execute_tool(self, name: str, arguments: str) -> str:
+        metrics = get_metrics()
         if not self._registry.has(name):
+            metrics.record_success("tool", ok=False)
             return json.dumps({"error": f"unknown tool {name}"}, ensure_ascii=False)
         try:
-            result = await invoke(self._registry, name, _safe_json_args(arguments))
+            with metrics.time_block(f"tool_{name}"):
+                result = await invoke(self._registry, name, _safe_json_args(arguments))
         except Exception as exc:
+            metrics.record_success("tool", ok=False)
             return json.dumps({"error": str(exc)}, ensure_ascii=False)
+        metrics.record_success("tool", ok=True)
         if isinstance(result, str):
             return result
         return json.dumps(result, ensure_ascii=False, default=str)
@@ -138,13 +144,18 @@ class TravelOrchestrator:
         openai_msgs: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
         openai_msgs.extend(_to_openai_messages(msgs))
 
+        metrics = get_metrics()
+        metrics.increment_counter("chat_requests")
         tools, tool_choice = await self._route(msgs)
         for _ in range(settings.max_react_iterations):
             round_tool_choice = tool_choice
             tool_choice = "auto"
-            resp = await self._llm.chat_completion(
-                openai_msgs, tools=tools, tool_choice=round_tool_choice
-            )
+            with metrics.time_block("llm_completion"):
+                resp = await self._llm.chat_completion(
+                    openai_msgs, tools=tools, tool_choice=round_tool_choice
+                )
+            if getattr(resp, "usage", None):
+                metrics.record_tokens(resp.usage.prompt_tokens, resp.usage.completion_tokens)
             choice = resp.choices[0]
             msg = choice.message
 

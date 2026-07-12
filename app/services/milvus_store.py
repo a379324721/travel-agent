@@ -61,7 +61,9 @@ class MilvusDocumentStore:
                     FieldSchema(name="content", dtype=DataType.VARCHAR, max_length=65535),
                     FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=_EMBED_DIM),
                 ]
-                schema = MilvusCollectionSchema(fields, description="Business travel knowledge base")
+                schema = MilvusCollectionSchema(
+                    fields, description="Business travel knowledge base"
+                )
                 col = MilvusCollection(name=self.collection_name, schema=schema)
                 index = {
                     "index_type": "IVF_FLAT",

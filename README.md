@@ -24,11 +24,11 @@
                     └───────────────────┘    └───────────────┘
 ```
 
-- **应用层**：`app/main.py` 注册路由与生命周期（连接池、向量库）
-- **编排层**：`app/agent/orchestrator.py` 汇总消息窗口、摘要长对话、调用 LLM 与工具
-- **Agent 核心**：`app/core/agent/`（ReAct、planner、reflection）、`app/core/tools/`、`app/core/memory/`、`app/core/rag/`
+- **应用层**：`app/main.py` 注册路由与生命周期（连接池、向量库、会话存储）
+- **编排层**：`app/agent/` 意图路由、消息窗口与摘要、LLM 工具调用循环、业务工具集
+- **Agent 核心**：`app/core/intent/`（快车道意图识别）、`app/core/tools/`（工具注册中心与库存/订票）、`app/core/memory/`（会话/滑窗/摘要）、`app/core/rag/`（多路召回检索）
 - **领域层**：`app/domain/travel/` 行程构建、差标规则与校验
-- **基础设施**：`app/infrastructure/`（数据库、缓存、LLM 客户端、可观测性）、`app/services/`
+- **基础设施**：`app/infrastructure/`（数据库会话、运行指标）、`app/services/`（LLM、嵌入、Milvus）、`app/etl/`（文档入库管道）
 
 ## 环境要求
 
@@ -61,6 +61,7 @@ uv run python scripts/seed_policies.py
 |------|------|------|
 | GET | `/` | 服务名与文档链接 |
 | GET | `/api/v1/health` | 依赖健康状态 |
+| GET | `/api/v1/metrics` | 运行指标快照（请求/工具计数、token、延迟 p50） |
 | POST | `/api/v1/chat` | 对话；`stream: true` 时返回 SSE |
 | POST | `/api/v1/documents/ingest` | 文档分块入库（需 Milvus） |
 | GET | `/api/v1/documents/search` | 向量检索 |

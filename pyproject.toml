@@ -50,3 +50,5 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+# UP042(str+Enum → StrEnum)为 unsafe fix：会改变 str()/format() 语义，暂不迁移
+ignore = ["UP042"]

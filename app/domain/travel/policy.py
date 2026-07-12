@@ -87,7 +87,8 @@ def evaluate_budget_and_approval(
     warnings: list[str] = []
     if request.budget_ceiling_cny and itinerary.total_estimated_cny > request.budget_ceiling_cny:
         warnings.append(
-            f"行程预估 {itinerary.total_estimated_cny} 超过个人填报上限 {request.budget_ceiling_cny}。"
+            f"行程预估 {itinerary.total_estimated_cny} "
+            f"超过个人填报上限 {request.budget_ceiling_cny}。"
         )
     if itinerary.total_estimated_cny > policy.requires_pre_approval_above_cny:
         warnings.append(
@@ -96,7 +97,8 @@ def evaluate_budget_and_approval(
     delta = (request.departure_date - date.today()).days
     if delta < policy.advance_booking_days_min:
         warnings.append(
-            f"距出发仅 {delta} 天，低于提前 {policy.advance_booking_days_min} 天预订要求，可能产生附加费。"
+            f"距出发仅 {delta} 天，低于提前 {policy.advance_booking_days_min} 天预订要求，"
+            "可能产生附加费。"
         )
     return warnings
 
