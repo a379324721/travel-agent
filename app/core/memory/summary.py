@@ -2,16 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from app.core.memory.short_term import ChatTurn, ShortTermMemory
 from app.services.llm import LLMService
-
-
-@dataclass(slots=True)
-class SummaryState:
-    summary_text: str
-    covered_turns: int
 
 
 class MemorySummarizer:
@@ -28,12 +20,12 @@ class MemorySummarizer:
         self._token_threshold = token_threshold
         self._summary_max_tokens = summary_max_tokens
 
-    async def maybe_compress(self, memory: ShortTermMemory) -> SummaryState | None:
+    async def maybe_compress(self, memory: ShortTermMemory) -> None:
         if memory.total_tokens() <= self._token_threshold:
-            return None
+            return
         turns = memory.snapshot()
         if len(turns) < 4:
-            return None
+            return
         pivot = max(2, len(turns) // 2)
         older, recent = turns[:pivot], turns[pivot:]
         transcript = "\n".join(f"{t.role}: {t.content}" for t in older)
@@ -54,4 +46,3 @@ class MemorySummarizer:
         memory.clear()
         memory.extend([ChatTurn(role="system", content=f"[历史摘要]\n{text}")])
         memory.extend(recent)
-        return SummaryState(summary_text=text, covered_turns=len(older))
