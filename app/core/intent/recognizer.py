@@ -3,48 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any
 
+from app.core.intent.intents import TravelIntent
 from app.core.intent.llm_classifier import (
     LLMClassification,
     LLMIntentClassifier,
 )
 from app.core.intent.rule_engine import RuleEngine
 
-
-class TravelIntent(str, Enum):
-    """商旅子域意图（与子 Agent 路由对齐）。"""
-
-    SEARCH_FLIGHT = "search_flight"
-    SEARCH_HOTEL = "search_hotel"
-    SEARCH_TRAIN = "search_train"
-    TRIP_PLANNING = "trip_planning"
-    APPLICATION = "application"
-    POLICY = "policy"
-    BOOKING = "booking"
-    INFO_QUERY = "info_query"
-    RAG = "rag"
-    GENERAL = "general"
-
-
 BusinessIntent = TravelIntent
-
-
-_SLUG_TO_ENUM: dict[str, TravelIntent] = {
-    "search_flight": TravelIntent.SEARCH_FLIGHT,
-    "search_hotel": TravelIntent.SEARCH_HOTEL,
-    "search_train": TravelIntent.SEARCH_TRAIN,
-    "trip_planning": TravelIntent.TRIP_PLANNING,
-    "application": TravelIntent.APPLICATION,
-    "policy": TravelIntent.POLICY,
-    "booking": TravelIntent.BOOKING,
-    "info_query": TravelIntent.INFO_QUERY,
-    "rag": TravelIntent.RAG,
-    "general": TravelIntent.GENERAL,
-}
-
-_DEFAULT_ALLOWED = tuple(sorted(_SLUG_TO_ENUM.keys()))
 
 
 @dataclass(slots=True)
@@ -100,12 +68,10 @@ class IntentRecognizer:
         rule_engine: RuleEngine | None = None,
         llm_classifier: LLMIntentClassifier | None = None,
         slow_lane_threshold: float = 0.82,
-        allowed_slugs: tuple[str, ...] = _DEFAULT_ALLOWED,
     ) -> None:
         self._rules = rule_engine or RuleEngine()
         self._llm = llm_classifier
         self._slow_threshold = slow_lane_threshold
-        self._allowed = allowed_slugs
 
     @classmethod
     def with_llm(
@@ -117,11 +83,14 @@ class IntentRecognizer:
     ) -> IntentRecognizer:
         """使用内置 `StructuredLLMBridge` 与默认慢车道分类器构造识别器。"""
         bridge = StructuredLLMBridge(llm_client, model=model)
-        classifier = LLMIntentClassifier(bridge, allowed_slugs=_DEFAULT_ALLOWED)
+        classifier = LLMIntentClassifier(bridge)
         return cls(llm_classifier=classifier, slow_lane_threshold=slow_lane_threshold)
 
     def _slug_to_intent(self, slug: str) -> TravelIntent:
-        return _SLUG_TO_ENUM.get(slug, TravelIntent.GENERAL)
+        try:
+            return TravelIntent(slug)
+        except ValueError:
+            return TravelIntent.GENERAL
 
     def _merge(
         self,

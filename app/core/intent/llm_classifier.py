@@ -9,6 +9,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+from app.core.intent.intents import TravelIntent
+
 
 @runtime_checkable
 class StructuredLLMClient(Protocol):
@@ -41,14 +43,8 @@ class LLMIntentClassifier:
     使用 LLM 进行意图分类，要求模型输出固定 JSON 结构以便解析与校验。
     """
 
-    def __init__(
-        self,
-        llm: StructuredLLMClient,
-        *,
-        allowed_slugs: tuple[str, ...],
-    ) -> None:
+    def __init__(self, llm: StructuredLLMClient) -> None:
         self._llm = llm
-        self._allowed = frozenset(allowed_slugs)
 
     async def classify(self, text: str) -> LLMClassification:
         """对文本进行异步分类；解析失败时回退为 general 低置信度。"""
@@ -57,10 +53,8 @@ class LLMIntentClassifier:
             "必须只输出一个 JSON 对象，字段：intent_slug (string), confidence (0-1 小数), "
             "rationale (简短中文理由)。不要输出其它文字。"
         )
-        user = (
-            f"用户输入：\n{text}\n\n"
-            f"可选意图 slug 列表：{sorted(self._allowed)}"
-        )
+        catalog = "\n".join(f"- {i.value}: {i.description}" for i in TravelIntent)
+        user = f"用户输入：\n{text}\n\n可选意图（slug: 含义）：\n{catalog}"
         raw = await self._llm.complete_structured(
             system_prompt=system,
             user_content=user,
@@ -78,7 +72,9 @@ class LLMIntentClassifier:
             return LLMClassification("general", 0.35, "parse_error")
 
         conf = max(0.0, min(1.0, conf))
-        if slug not in self._allowed:
+        try:
+            TravelIntent(slug)
+        except ValueError:
             return LLMClassification("general", conf * 0.6, rationale or "unknown_slug")
         return LLMClassification(slug, conf, rationale)
 

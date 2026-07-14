@@ -212,6 +212,10 @@ async def test_slow_lane_triggers_when_rules_miss() -> None:
     assert result.intent is TravelIntent.TRIP_PLANNING
     assert result.metadata["merged"] == "slow_only"
     assert len(llm.calls) == 1
+    # 提示词须携带每个 slug 的中文含义，而非裸列表
+    prompt = llm.calls[0]["messages"][1]["content"]
+    assert "application: 提交出差申请" in prompt
+    assert "rag: 需要引用公司内部" in prompt
 
 
 async def test_fast_lane_skips_llm_when_rules_confident() -> None:
