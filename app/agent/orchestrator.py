@@ -82,7 +82,14 @@ class TravelOrchestrator:
         self._registry = registry or build_default_registry(
             self._policy, policy_rag, approvals=approvals, booking_store=booking_store
         )
-        self._recognizer = intent_recognizer or IntentRecognizer()
+        if intent_recognizer is not None:
+            self._recognizer = intent_recognizer
+        elif settings.intent_slow_lane_enabled:
+            self._recognizer = IntentRecognizer.with_llm(
+                self._llm, slow_lane_threshold=settings.intent_slow_lane_threshold
+            )
+        else:
+            self._recognizer = IntentRecognizer()
         self._directory = directory or EmployeeDirectory()
         self._summarizer = MemorySummarizer(
             self._llm,
@@ -147,7 +154,10 @@ class TravelOrchestrator:
         )
         result = await self._recognizer.recognize(last_user)
         logger.info(
-            "intent.recognized", intent=result.intent.value, confidence=result.confidence
+            "intent.recognized",
+            intent=result.intent.value,
+            confidence=result.confidence,
+            lane=result.metadata.get("merged"),
         )
         is_policy = result.intent in (TravelIntent.POLICY, TravelIntent.RAG)
         if is_policy and settings.llm_force_tool_choice:

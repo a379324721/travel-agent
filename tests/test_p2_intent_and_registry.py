@@ -8,6 +8,7 @@ from typing import Any
 
 from app.agent.orchestrator import TravelOrchestrator
 from app.agent.tools import build_default_registry
+from app.core.intent.recognizer import IntentRecognizer, TravelIntent
 from app.domain.schemas import ChatMessage, MessageRole
 from app.domain.travel.policy import default_corporate_policy
 
@@ -184,3 +185,49 @@ async def test_invalid_tool_args_return_error_instead_of_crash() -> None:
     assert result["choices"][0]["message"]["content"]
     tool_msgs = [m for m in llm.calls[1]["messages"] if m.get("role") == "tool"]
     assert "error" in json.loads(tool_msgs[0]["content"])
+
+
+# ---------------------------------------------------------------------------
+# 意图识别慢车道（LLM 分类）
+
+
+async def test_slow_lane_triggers_when_rules_miss() -> None:
+    """规则完全不命中时走 LLM 分类，采纳其结果。"""
+    llm = FakeLLM(
+        [
+            _final_completion(
+                json.dumps(
+                    {
+                        "intent_slug": "trip_planning",
+                        "confidence": 0.9,
+                        "rationale": "用户在咨询差旅安排",
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        ]
+    )
+    recognizer = IntentRecognizer.with_llm(llm)
+    result = await recognizer.recognize("预算有点紧张，帮我想想怎么弄")
+    assert result.intent is TravelIntent.TRIP_PLANNING
+    assert result.metadata["merged"] == "slow_only"
+    assert len(llm.calls) == 1
+
+
+async def test_fast_lane_skips_llm_when_rules_confident() -> None:
+    """规则命中（置信度 0.82 达阈值）时不触发 LLM 调用。"""
+    llm = FakeLLM([])  # 一旦被调用会 IndexError
+    recognizer = IntentRecognizer.with_llm(llm)
+    result = await recognizer.recognize("帮我查明天去上海的机票")
+    assert result.intent is TravelIntent.SEARCH_FLIGHT
+    assert result.metadata["merged"] == "fast_only"
+    assert llm.calls == []
+
+
+async def test_slow_lane_parse_error_falls_back_to_general() -> None:
+    """LLM 输出非 JSON 时降级为 general 低置信度，不抛异常。"""
+    llm = FakeLLM([_final_completion("我觉得这是订票意图")])
+    recognizer = IntentRecognizer.with_llm(llm)
+    result = await recognizer.recognize("嗯嗯好的谢谢")
+    assert result.intent is TravelIntent.GENERAL
+    assert result.confidence < 0.5

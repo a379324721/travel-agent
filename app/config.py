@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # Agent config
     # 部分兼容端点（如 DashScope 思考模式）不支持强制指定 tool_choice 对象，可关掉退化为 auto
     llm_force_tool_choice: bool = True
+    # 意图识别慢车道：规则置信不足时调 LLM 分类，每次触发多一轮 LLM 调用
+    intent_slow_lane_enabled: bool = True
+    intent_slow_lane_threshold: float = 0.82
     max_react_iterations: int = 10
     memory_window_size: int = 20
     memory_max_tokens: int = 8000
