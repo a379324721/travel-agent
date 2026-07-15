@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # Agent config
     # 部分兼容端点（如 DashScope 思考模式）不支持强制指定 tool_choice 对象，可关掉退化为 auto
     llm_force_tool_choice: bool = True
+    # 思考模式开关（DashScope 等端点的 enable_thinking）：None 不传沿用端点默认；
+    # 设 false 可解锁强制 tool_choice
+    llm_enable_thinking: bool | None = None
     # 意图识别慢车道：规则置信不足时调 LLM 分类，每次触发多一轮 LLM 调用
     intent_slow_lane_enabled: bool = True
     intent_slow_lane_threshold: float = 0.82

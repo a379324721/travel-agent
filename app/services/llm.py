@@ -46,6 +46,8 @@ class LLMService:
             if tools:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = tool_choice
+            if settings.llm_enable_thinking is not None:
+                kwargs["extra_body"] = {"enable_thinking": settings.llm_enable_thinking}
             return await self._client.chat.completions.create(**kwargs)
 
         return await self._breaker.call(_call)
@@ -67,6 +69,8 @@ class LLMService:
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice
+        if settings.llm_enable_thinking is not None:
+            kwargs["extra_body"] = {"enable_thinking": settings.llm_enable_thinking}
 
         stream = await self._client.chat.completions.create(**kwargs)
         async for chunk in stream:
