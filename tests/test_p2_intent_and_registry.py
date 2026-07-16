@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -129,7 +130,13 @@ async def test_flight_search_tool_executes_mock_source() -> None:
         [
             _tool_call_completion(
                 "search_flights",
-                '{"origin": "北京", "destination": "上海", "depart_date": "2026-08-01"}',
+                json.dumps(
+                    {
+                        "origin": "北京",
+                        "destination": "上海",
+                        "depart_date": (date.today() + timedelta(days=14)).isoformat(),
+                    }
+                ),
             ),
             _final_completion("找到 CA1501。"),
         ]
@@ -142,6 +149,25 @@ async def test_flight_search_tool_executes_mock_source() -> None:
     payload = json.loads(tool_msgs[0]["content"])
     assert payload["mode"] == "flight"
     assert payload["results"][0]["flight_no"] == "CA1501"
+
+
+async def test_search_tool_rejects_past_date() -> None:
+    llm = FakeLLM(
+        [
+            _tool_call_completion(
+                "search_flights",
+                '{"origin": "北京", "destination": "上海", "depart_date": "2020-01-01"}',
+            ),
+            _final_completion("好的。"),
+        ]
+    )
+    orch = TravelOrchestrator(llm=llm)  # type: ignore[arg-type]
+    await orch.run_completion([_user("查机票")])
+
+    tool_msgs = [m for m in llm.calls[1]["messages"] if m.get("role") == "tool"]
+    payload = json.loads(tool_msgs[0]["content"])
+    assert "已是过去" in payload["error"]
+    assert date.today().isoformat() in payload["error"]
 
 
 async def test_create_booking_tool_returns_confirmation() -> None:

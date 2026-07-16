@@ -36,6 +36,18 @@ def _parse_date(s: str) -> date:
     return date(y, mo, d)
 
 
+def _parse_future_date(s: str, field: str) -> date:
+    """LLM 可能拿错误的「今天」推算相对日期，过去的日期一律打回让其与用户确认。"""
+    d = _parse_date(s)
+    today = date.today()
+    if d < today:
+        raise ValueError(
+            f"{field} {d.isoformat()} 已是过去，今天是 {today.isoformat()}，"
+            "请与用户确认实际日期后重试。"
+        )
+    return d
+
+
 def _plan_itinerary_schema() -> dict[str, Any]:
     return {
         "type": "object",
@@ -102,8 +114,10 @@ def build_default_registry(
             grade=EmployeeGrade(args["grade"]),
             origin_city=args["origin_city"],
             destination_city=args["destination_city"],
-            departure_date=_parse_date(args["departure_date"]),
-            return_date=_parse_date(args["return_date"]) if args.get("return_date") else None,
+            departure_date=_parse_future_date(args["departure_date"], "出发日期"),
+            return_date=_parse_future_date(args["return_date"], "回程日期")
+            if args.get("return_date")
+            else None,
             purpose=TripPurpose(args["purpose"]),
             preferred_class=TravelClass(args["preferred_class"])
             if args.get("preferred_class")
@@ -120,8 +134,10 @@ def build_default_registry(
             grade=EmployeeGrade(args["grade"]),
             origin_city=args["origin_city"],
             destination_city=args["destination_city"],
-            departure_date=_parse_date(args["departure_date"]),
-            return_date=_parse_date(args["return_date"]) if args.get("return_date") else None,
+            departure_date=_parse_future_date(args["departure_date"], "出发日期"),
+            return_date=_parse_future_date(args["return_date"], "回程日期")
+            if args.get("return_date")
+            else None,
             purpose=TripPurpose.CLIENT,
         )
         dummy = build_draft_itinerary(req)
@@ -140,12 +156,15 @@ def build_default_registry(
         return await rag.search_context(str(query))
 
     async def search_flights_tool(**args: Any) -> dict[str, Any]:
+        _parse_future_date(str(args["depart_date"]), "出发日期")
         return await search_flights(FlightSearchRequest(**args))
 
     async def search_hotels_tool(**args: Any) -> dict[str, Any]:
+        _parse_future_date(str(args["check_in"]), "入住日期")
         return await search_hotels(HotelSearchRequest(**args))
 
     async def search_trains_tool(**args: Any) -> dict[str, Any]:
+        _parse_future_date(str(args["depart_date"]), "出发日期")
         return await search_trains(TrainSearchRequest(**args))
 
     async def create_booking_tool(**args: Any) -> dict[str, Any]:
