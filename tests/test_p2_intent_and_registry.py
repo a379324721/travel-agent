@@ -151,6 +151,31 @@ async def test_flight_search_tool_executes_mock_source() -> None:
     assert payload["results"][0]["flight_no"] == "CA1501"
 
 
+async def test_last_round_forces_text_wrap_up(monkeypatch) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "max_react_iterations", 2)
+    llm = FakeLLM(
+        [
+            _tool_call_completion(
+                "search_flights",
+                '{"origin": "北京", "destination": "上海", "depart_date": "2020-01-01"}',
+            ),
+            _final_completion("已查到部分信息，日期需要您确认。"),
+        ]
+    )
+    orch = TravelOrchestrator(llm=llm)  # type: ignore[arg-type]
+    resp = await orch.run_completion([_user("查机票")])
+
+    last_call = llm.calls[1]
+    assert last_call["tool_choice"] == "none"
+    assert any(
+        m.get("role") == "system" and "轮次上限" in m.get("content", "")
+        for m in last_call["messages"]
+    )
+    assert "日期需要您确认" in resp["choices"][0]["message"]["content"]
+
+
 async def test_search_tool_rejects_past_date() -> None:
     llm = FakeLLM(
         [

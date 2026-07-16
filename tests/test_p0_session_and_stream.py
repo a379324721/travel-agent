@@ -68,6 +68,7 @@ class FakeLLM:
         self._completions = list(completions or [])
         self._stream_rounds = list(stream_rounds or [])
         self.seen_messages: list[list[dict[str, Any]]] = []
+        self.stream_kwargs: list[dict[str, Any]] = []
 
     async def chat_completion(self, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
         self.seen_messages.append(messages)
@@ -75,6 +76,7 @@ class FakeLLM:
 
     async def chat_completion_stream(self, messages: list[dict[str, Any]], **kwargs: Any):
         self.seen_messages.append(messages)
+        self.stream_kwargs.append(kwargs)
         for chunk in self._stream_rounds.pop(0):
             yield chunk
 
@@ -241,6 +243,35 @@ async def test_stream_completion_persists_full_thread() -> None:
     second_call = llm.seen_messages[2]
     assert any(m.get("role") == "tool" for m in second_call), "历史工具结果未带上"
     assert any(m.get("tool_calls") for m in second_call), "历史 tool_calls 未带上"
+
+
+async def test_stream_last_round_forces_text_wrap_up(monkeypatch) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "max_react_iterations", 2)
+    llm = FakeLLM(
+        stream_rounds=[
+            [
+                _stream_chunk(
+                    tool_calls=[_tool_call_delta(0, "call-1", "unknown_tool", "{}")]
+                ),
+                _stream_chunk(finish_reason="tool_calls"),
+            ],
+            [
+                _stream_chunk(content="先说结论。"),
+                _stream_chunk(finish_reason="stop"),
+            ],
+        ]
+    )
+    orch = TravelOrchestrator(llm=llm)  # type: ignore[arg-type]
+
+    chunks = [c async for c in orch.stream_completion([_user("测试")])]
+    assert chunks[-1].type == StreamChunkType.DONE, "末轮强制收尾后应正常结束而非 ERROR"
+    assert llm.stream_kwargs[-1]["tool_choice"] == "none"
+    assert any(
+        m.get("role") == "system" and "轮次上限" in m.get("content", "")
+        for m in llm.seen_messages[-1]
+    )
 
 
 def test_short_term_memory_drops_orphan_tool_turns() -> None:

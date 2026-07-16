@@ -37,6 +37,15 @@ create_booking 订票 → 行程结束后 submit_expense_report 一键报销。
 
 _WEEKDAY_CN = "一二三四五六日"
 
+# 末轮收尾指令：追加在消息尾部（不动前缀，保住提示词缓存），不落库
+_WRAP_UP_MESSAGE = {
+    "role": "system",
+    "content": (
+        "已达到工具调用轮次上限，请基于已有信息直接答复用户，"
+        "说明已完成与未完成的部分，不要再调用工具。"
+    ),
+}
+
 
 def _system_message() -> dict[str, Any]:
     today = date.today()
@@ -238,9 +247,12 @@ class TravelOrchestrator:
         tools, tool_choice = await self._route(msgs)
         new_msgs: list[ChatMessage] = []
         round_texts: list[str] = []
-        for _ in range(settings.max_react_iterations):
+        for i in range(settings.max_react_iterations):
             round_tool_choice = tool_choice
             tool_choice = "auto"
+            if i == settings.max_react_iterations - 1:
+                round_tool_choice = "none"
+                openai_msgs.append(_WRAP_UP_MESSAGE)
             with metrics.time_block("llm_completion"):
                 resp = await self._llm.chat_completion(
                     openai_msgs, tools=tools, tool_choice=round_tool_choice
@@ -359,9 +371,12 @@ class TravelOrchestrator:
         tools, tool_choice = await self._route(msgs)
         idx = 0
         new_msgs: list[ChatMessage] = []
-        for _ in range(settings.max_react_iterations):
+        for i in range(settings.max_react_iterations):
             round_tool_choice = tool_choice
             tool_choice = "auto"
+            if i == settings.max_react_iterations - 1:
+                round_tool_choice = "none"
+                openai_msgs.append(_WRAP_UP_MESSAGE)
             content_parts: list[str] = []
             calls: dict[int, dict[str, str]] = {}
             finish_reason: str | None = None
