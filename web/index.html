@@ -104,7 +104,8 @@
   }
   .bubble.md a { color: var(--accent); }
   .bubble.md hr { border: 0; border-top: 1px solid var(--line); }
-  .chips { margin: 4px 0 2px; display: flex; flex-direction: column; gap: 6px; }
+  .seq { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+  .seq .bubble { max-width: 100%; }
   .chip {
     align-self: flex-start; background: var(--chip-bg); color: var(--chip-text);
     border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-size: 12.5px;
@@ -347,15 +348,31 @@ async function send(text) {
   const wrap = document.createElement("div");
   wrap.className = "msg assistant";
   const col = document.createElement("div");
+  col.className = "seq";
   col.style.maxWidth = "82%";
-  const chips = document.createElement("div");
-  chips.className = "chips";
-  const bubble = document.createElement("div");
-  bubble.className = "bubble typing";
-  bubble.textContent = "";
-  col.appendChild(chips); col.appendChild(bubble); wrap.appendChild(col);
+  wrap.appendChild(col);
   messagesEl.appendChild(wrap);
   scrollBottom();
+
+  /* 文本与工具芯片按到达顺序追加：每个工具轮之后的文本新开一个气泡。 */
+  let bubble = null;
+  let mdBuf = "";
+  const ensureBubble = () => {
+    if (!bubble) {
+      bubble = document.createElement("div");
+      bubble.className = "bubble typing";
+      mdBuf = "";
+      col.appendChild(bubble);
+    }
+    return bubble;
+  };
+  const closeBubble = () => {
+    if (!bubble) return;
+    if (!bubble.textContent) bubble.remove();
+    else bubble.classList.remove("typing");
+    bubble = null;
+  };
+  ensureBubble();
 
   try {
     const resp = await fetch("/api/v1/chat", {
@@ -373,7 +390,6 @@ async function send(text) {
     const reader = resp.body.getReader();
     const dec = new TextDecoder();
     let buf = "";
-    let mdBuf = "";
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -385,24 +401,26 @@ async function send(text) {
         if (!line.startsWith("data:")) continue;
         const chunk = JSON.parse(line.slice(5));
         if (chunk.type === "content" && chunk.delta) {
+          ensureBubble();
           mdBuf += chunk.delta;
           renderMarkdown(bubble, mdBuf);
           scrollBottom();
         } else if (chunk.type === "tool_call") {
-          addChip(chips, chunk.tool_name, chunk.tool_args);
+          closeBubble();
+          addChip(col, chunk.tool_name, chunk.tool_args);
         } else if (chunk.type === "error") {
-          bubble.classList.add("error");
-          mdBuf += "\n\n[出错] " + chunk.error;
+          ensureBubble().classList.add("error");
+          mdBuf += (mdBuf ? "\n\n" : "") + "[出错] " + chunk.error;
           renderMarkdown(bubble, mdBuf);
         }
       }
     }
-    if (!bubble.textContent) bubble.textContent = "（无内容）";
+    if (!col.querySelector(".bubble")) ensureBubble().textContent = "（无内容）";
   } catch (e) {
-    bubble.classList.add("error");
+    ensureBubble().classList.add("error");
     bubble.textContent = "请求失败：" + e.message;
   } finally {
-    bubble.classList.remove("typing");
+    closeBubble();
     busy = false; sendEl.disabled = false;
     inputEl.focus();
     scrollBottom();
