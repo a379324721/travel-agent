@@ -174,3 +174,30 @@ async def test_stream_completion_tool_loop_and_persist() -> None:
 
     stored = json.loads(fake_redis.data["session:s2:messages"])
     assert stored[-1] == {"role": "assistant", "content": "完成"}
+
+
+async def test_stream_completion_persists_intermediate_round_text() -> None:
+    fake_redis = FakeRedis()
+    store = RedisSessionStore(fake_redis, ttl_seconds=60)
+    # 第一轮：先说话再调工具；第二轮：最终回答。两段文本都应入历史。
+    llm = FakeLLM(
+        stream_rounds=[
+            [
+                _stream_chunk(content="我先查一下。"),
+                _stream_chunk(
+                    tool_calls=[_tool_call_delta(0, "call-1", "unknown_tool", "{}")]
+                ),
+                _stream_chunk(finish_reason="tool_calls"),
+            ],
+            [
+                _stream_chunk(content="查到了。"),
+                _stream_chunk(finish_reason="stop"),
+            ],
+        ]
+    )
+    orch = TravelOrchestrator(llm=llm, session_store=store)  # type: ignore[arg-type]
+
+    [c async for c in orch.stream_completion([_user("测试")], session_id="s3")]
+
+    stored = json.loads(fake_redis.data["session:s3:messages"])
+    assert stored[-1]["content"] == "我先查一下。\n\n查到了。"

@@ -302,6 +302,7 @@ class TravelOrchestrator:
 
         tools, tool_choice = await self._route(msgs)
         idx = 0
+        round_texts: list[str] = []
         for _ in range(settings.max_react_iterations):
             round_tool_choice = tool_choice
             tool_choice = "auto"
@@ -336,12 +337,16 @@ class TravelOrchestrator:
                 if choice.finish_reason:
                     finish_reason = choice.finish_reason
 
+            round_text = "".join(content_parts)
+            if round_text:
+                round_texts.append(round_text)
+
             if calls:
                 ordered = [calls[i] for i in sorted(calls)]
                 openai_msgs.append(
                     {
                         "role": "assistant",
-                        "content": "".join(content_parts) or None,
+                        "content": round_text or None,
                         "tool_calls": [
                             {
                                 "id": c["id"],
@@ -369,7 +374,7 @@ class TravelOrchestrator:
                     )
                 continue
 
-            final = "".join(content_parts)
+            final = "\n\n".join(round_texts)
             await self._persist_thread(
                 session_id,
                 [*msgs, ChatMessage(role=MessageRole.ASSISTANT, content=final)],
@@ -382,8 +387,20 @@ class TravelOrchestrator:
             )
             return
 
+        error_text = "已达到最大推理轮次，请简化问题后重试。"
+        await self._persist_thread(
+            session_id,
+            [
+                *msgs,
+                ChatMessage(
+                    role=MessageRole.ASSISTANT,
+                    content="\n\n".join([*round_texts, f"（{error_text}）"]),
+                ),
+            ],
+            user_id=user_id,
+        )
         yield StreamChunk(
             type=StreamChunkType.ERROR,
             index=idx,
-            error="已达到最大推理轮次，请简化问题后重试。",
+            error=error_text,
         )
