@@ -176,10 +176,10 @@ async def test_stream_completion_tool_loop_and_persist() -> None:
     assert stored[-1] == {"role": "assistant", "content": "完成"}
 
 
-async def test_stream_completion_persists_intermediate_round_text() -> None:
+async def test_stream_completion_persists_full_thread() -> None:
     fake_redis = FakeRedis()
     store = RedisSessionStore(fake_redis, ttl_seconds=60)
-    # 第一轮：先说话再调工具；第二轮：最终回答。两段文本都应入历史。
+    # 第一轮：先说话再调工具；第二轮：最终回答。工具轮完整入历史。
     llm = FakeLLM(
         stream_rounds=[
             [
@@ -193,6 +193,10 @@ async def test_stream_completion_persists_intermediate_round_text() -> None:
                 _stream_chunk(content="查到了。"),
                 _stream_chunk(finish_reason="stop"),
             ],
+            [
+                _stream_chunk(content="好的。"),
+                _stream_chunk(finish_reason="stop"),
+            ],
         ]
     )
     orch = TravelOrchestrator(llm=llm, session_store=store)  # type: ignore[arg-type]
@@ -200,4 +204,30 @@ async def test_stream_completion_persists_intermediate_round_text() -> None:
     [c async for c in orch.stream_completion([_user("测试")], session_id="s3")]
 
     stored = json.loads(fake_redis.data["session:s3:messages"])
-    assert stored[-1]["content"] == "我先查一下。\n\n查到了。"
+    assert [m["role"] for m in stored] == ["user", "assistant", "tool", "assistant"]
+    assert stored[1]["content"] == "我先查一下。"
+    assert stored[1]["tool_calls"][0]["function"]["name"] == "unknown_tool"
+    assert stored[2]["tool_call_id"] == "call-1"
+    assert stored[-1]["content"] == "查到了。"
+
+    # 下一轮请求应带上历史中的工具调用与结果
+    [c async for c in orch.stream_completion([_user("继续")], session_id="s3")]
+    second_call = llm.seen_messages[2]
+    assert any(m.get("role") == "tool" for m in second_call), "历史工具结果未带上"
+    assert any(m.get("tool_calls") for m in second_call), "历史 tool_calls 未带上"
+
+
+def test_short_term_memory_drops_orphan_tool_turns() -> None:
+    from app.core.memory.short_term import ChatTurn, ShortTermMemory
+
+    memory = ShortTermMemory(max_tokens=8000, max_turns=2)
+    memory.extend(
+        [
+            ChatTurn(role="user", content="订票"),
+            ChatTurn(role="assistant", content="", tool_calls=[{"id": "c1"}]),
+            ChatTurn(role="tool", content="结果", tool_call_id="c1"),
+            ChatTurn(role="assistant", content="已订"),
+        ]
+    )
+    # max_turns=2 会裁掉发起 tool_calls 的 assistant，队首孤儿 tool 应一并丢弃
+    assert [t.role for t in memory.snapshot()] == ["assistant"]

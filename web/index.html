@@ -248,6 +248,17 @@ function addMsg(role, text) {
   return b;
 }
 
+function addSeqCol() {
+  const wrap = document.createElement("div");
+  wrap.className = "msg assistant";
+  const col = document.createElement("div");
+  col.className = "seq";
+  col.style.maxWidth = "82%";
+  wrap.appendChild(col);
+  messagesEl.appendChild(wrap);
+  return col;
+}
+
 function addChip(container, toolName, args) {
   const chip = document.createElement("div");
   chip.className = "chip";
@@ -274,7 +285,17 @@ async function loadHistory(id) {
     if (!r.ok) return;
     const data = await r.json();
     for (const m of data.messages || []) {
-      if (m.role === "user" || m.role === "assistant") addMsg(m.role, m.content);
+      if (m.role === "user") { addMsg(m.role, m.content); continue; }
+      if (m.role !== "assistant") continue;
+      if (m.content) addMsg(m.role, m.content);
+      if (m.tool_calls) {
+        const col = addSeqCol();
+        for (const tc of m.tool_calls) {
+          let args = {};
+          try { args = JSON.parse(tc.function.arguments || "{}"); } catch (e) { /* ignore */ }
+          addChip(col, tc.function.name, args);
+        }
+      }
     }
   } catch (e) { /* 历史不可用不影响新对话 */ }
 }
@@ -345,13 +366,7 @@ async function send(text) {
   busy = true; sendEl.disabled = true; inputEl.value = "";
 
   addMsg("user", text);
-  const wrap = document.createElement("div");
-  wrap.className = "msg assistant";
-  const col = document.createElement("div");
-  col.className = "seq";
-  col.style.maxWidth = "82%";
-  wrap.appendChild(col);
-  messagesEl.appendChild(wrap);
+  const col = addSeqCol();
   scrollBottom();
 
   /* 文本与工具芯片按到达顺序追加：每个工具轮之后的文本新开一个气泡。 */

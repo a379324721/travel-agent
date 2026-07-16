@@ -12,8 +12,8 @@ from app.domain.schemas import ChatMessage
 class RedisSessionStore:
     """以整段 JSON 保存每个会话的消息列表，带 TTL。
 
-    存储的是"用户可见"的对话线程（user / assistant / 摘要 system），
-    工具调用的中间消息不落库。
+    存储完整对话线程：user / assistant（含 tool_calls）/ tool 结果 / 摘要 system，
+    与发给 LLM 的消息保持一致（每请求动态构建的 system 提示除外）。
     """
 
     def __init__(self, redis: Any, *, ttl_seconds: int = 604800) -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 try:
     import tiktoken
@@ -24,6 +24,9 @@ def _approx_token_count(text: str) -> int:
 class ChatTurn:
     role: Role
     content: str
+    name: str | None = None
+    tool_call_id: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
 
 
 class ShortTermMemory:
@@ -63,13 +66,18 @@ class ShortTermMemory:
     def _trim_by_turns(self) -> None:
         while len(self._turns) > self._max_turns:
             self._turns.popleft()
+        self._drop_orphan_tool_turns()
 
     def _trim_by_tokens(self) -> None:
         while self._turns and self.total_tokens() > self._max_tokens:
             self._turns.popleft()
+        self._drop_orphan_tool_turns()
 
-    def as_messages(self) -> list[dict[str, str]]:
-        return [{"role": t.role, "content": t.content} for t in self._turns]
+    def _drop_orphan_tool_turns(self) -> None:
+        """裁剪可能砍掉发起 tool_calls 的 assistant 消息，
+        留在队首的 tool 结果就成了孤儿（LLM API 会拒绝），一并丢弃。"""
+        while self._turns and self._turns[0].role == "tool":
+            self._turns.popleft()
 
     def clear(self) -> None:
         self._turns.clear()

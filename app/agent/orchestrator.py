@@ -56,6 +56,10 @@ def _to_openai_messages(messages: list[ChatMessage]) -> list[dict[str, Any]]:
             d["name"] = m.name
         if m.tool_call_id:
             d["tool_call_id"] = m.tool_call_id
+        if m.tool_calls:
+            d["tool_calls"] = m.tool_calls
+            if not m.content:
+                d["content"] = None
         out.append(d)
     return out
 
@@ -123,10 +127,28 @@ class TravelOrchestrator:
             max_turns=settings.memory_window_size,
         )
         memory.extend(
-            [ChatTurn(role=m.role.value, content=m.content) for m in [*history, *messages]]
+            [
+                ChatTurn(
+                    role=m.role.value,
+                    content=m.content,
+                    name=m.name,
+                    tool_call_id=m.tool_call_id,
+                    tool_calls=m.tool_calls,
+                )
+                for m in [*history, *messages]
+            ]
         )
         await self._summarizer.maybe_compress(memory)
-        return [ChatMessage(role=MessageRole(t.role), content=t.content) for t in memory.snapshot()]
+        return [
+            ChatMessage(
+                role=MessageRole(t.role),
+                content=t.content,
+                name=t.name,
+                tool_call_id=t.tool_call_id,
+                tool_calls=t.tool_calls,
+            )
+            for t in memory.snapshot()
+        ]
 
     async def _persist_thread(
         self,
@@ -212,6 +234,7 @@ class TravelOrchestrator:
         metrics = get_metrics()
         metrics.increment_counter("chat_requests")
         tools, tool_choice = await self._route(msgs)
+        new_msgs: list[ChatMessage] = []
         for _ in range(settings.max_react_iterations):
             round_tool_choice = tool_choice
             tool_choice = "auto"
@@ -225,22 +248,27 @@ class TravelOrchestrator:
             msg = choice.message
 
             if msg.tool_calls:
-                assistant_msg: dict[str, Any] = {
-                    "role": "assistant",
-                    "content": msg.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments or "{}",
-                            },
-                        }
-                        for tc in msg.tool_calls
-                    ],
-                }
-                openai_msgs.append(assistant_msg)
+                tc_dicts = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments or "{}",
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ]
+                openai_msgs.append(
+                    {"role": "assistant", "content": msg.content, "tool_calls": tc_dicts}
+                )
+                new_msgs.append(
+                    ChatMessage(
+                        role=MessageRole.ASSISTANT,
+                        content=msg.content or "",
+                        tool_calls=tc_dicts,
+                    )
+                )
                 for tc in msg.tool_calls:
                     out = await self._execute_tool(tc.function.name, tc.function.arguments)
                     openai_msgs.append(
@@ -250,12 +278,20 @@ class TravelOrchestrator:
                             "content": out,
                         }
                     )
+                    new_msgs.append(
+                        ChatMessage(
+                            role=MessageRole.TOOL,
+                            content=out,
+                            name=tc.function.name,
+                            tool_call_id=tc.id,
+                        )
+                    )
                 continue
 
             content = msg.content or ""
             await self._persist_thread(
                 session_id,
-                [*msgs, ChatMessage(role=MessageRole.ASSISTANT, content=content)],
+                [*msgs, *new_msgs, ChatMessage(role=MessageRole.ASSISTANT, content=content)],
                 user_id=user_id,
             )
             return {
@@ -302,7 +338,7 @@ class TravelOrchestrator:
 
         tools, tool_choice = await self._route(msgs)
         idx = 0
-        round_texts: list[str] = []
+        new_msgs: list[ChatMessage] = []
         for _ in range(settings.max_react_iterations):
             round_tool_choice = tool_choice
             tool_choice = "auto"
@@ -338,27 +374,33 @@ class TravelOrchestrator:
                     finish_reason = choice.finish_reason
 
             round_text = "".join(content_parts)
-            if round_text:
-                round_texts.append(round_text)
 
             if calls:
                 ordered = [calls[i] for i in sorted(calls)]
+                tc_dicts = [
+                    {
+                        "id": c["id"],
+                        "type": "function",
+                        "function": {
+                            "name": c["name"],
+                            "arguments": c["arguments"] or "{}",
+                        },
+                    }
+                    for c in ordered
+                ]
                 openai_msgs.append(
                     {
                         "role": "assistant",
                         "content": round_text or None,
-                        "tool_calls": [
-                            {
-                                "id": c["id"],
-                                "type": "function",
-                                "function": {
-                                    "name": c["name"],
-                                    "arguments": c["arguments"] or "{}",
-                                },
-                            }
-                            for c in ordered
-                        ],
+                        "tool_calls": tc_dicts,
                     }
+                )
+                new_msgs.append(
+                    ChatMessage(
+                        role=MessageRole.ASSISTANT,
+                        content=round_text,
+                        tool_calls=tc_dicts,
+                    )
                 )
                 for c in ordered:
                     yield StreamChunk(
@@ -372,12 +414,19 @@ class TravelOrchestrator:
                     openai_msgs.append(
                         {"role": "tool", "tool_call_id": c["id"], "content": out}
                     )
+                    new_msgs.append(
+                        ChatMessage(
+                            role=MessageRole.TOOL,
+                            content=out,
+                            name=c["name"],
+                            tool_call_id=c["id"],
+                        )
+                    )
                 continue
 
-            final = "\n\n".join(round_texts)
             await self._persist_thread(
                 session_id,
-                [*msgs, ChatMessage(role=MessageRole.ASSISTANT, content=final)],
+                [*msgs, *new_msgs, ChatMessage(role=MessageRole.ASSISTANT, content=round_text)],
                 user_id=user_id,
             )
             yield StreamChunk(
@@ -392,10 +441,8 @@ class TravelOrchestrator:
             session_id,
             [
                 *msgs,
-                ChatMessage(
-                    role=MessageRole.ASSISTANT,
-                    content="\n\n".join([*round_texts, f"（{error_text}）"]),
-                ),
+                *new_msgs,
+                ChatMessage(role=MessageRole.ASSISTANT, content=f"（{error_text}）"),
             ],
             user_id=user_id,
         )

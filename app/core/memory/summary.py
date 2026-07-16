@@ -27,7 +27,12 @@ class MemorySummarizer:
         if len(turns) < 4:
             return
         pivot = max(2, len(turns) // 2)
+        # 不从「assistant(tool_calls) + tool 结果」组中间切开，否则保留段以孤儿 tool 开头
+        while pivot < len(turns) and turns[pivot].role == "tool":
+            pivot += 1
         older, recent = turns[:pivot], turns[pivot:]
+        if not recent:
+            return
         transcript = "\n".join(f"{t.role}: {t.content}" for t in older)
         prompt = (
             "请将以下对话压缩为简洁要点摘要，保留用户目标、约束与已确认事实；"
