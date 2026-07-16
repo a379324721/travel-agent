@@ -104,6 +104,32 @@ async def test_run_completion_persists_and_recalls_session() -> None:
     assert len(json.loads(fake_redis.data["session:s1:messages"])) == 4
 
 
+async def test_run_completion_returns_intermediate_round_text() -> None:
+    tool_round = SimpleNamespace(
+        id="resp-t",
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content="我先查一下。",
+                    tool_calls=[
+                        SimpleNamespace(
+                            id="call-1",
+                            function=SimpleNamespace(name="unknown_tool", arguments="{}"),
+                        )
+                    ],
+                ),
+                finish_reason="tool_calls",
+            )
+        ],
+        usage=None,
+    )
+    llm = FakeLLM(completions=[tool_round, _completion("查到了。")])
+    orch = TravelOrchestrator(llm=llm)  # type: ignore[arg-type]
+
+    resp = await orch.run_completion([_user("测试")])
+    assert resp["choices"][0]["message"]["content"] == "我先查一下。\n\n查到了。"
+
+
 async def test_run_completion_without_session_is_stateless() -> None:
     fake_redis = FakeRedis()
     store = RedisSessionStore(fake_redis, ttl_seconds=60)

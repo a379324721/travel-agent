@@ -235,6 +235,7 @@ class TravelOrchestrator:
         metrics.increment_counter("chat_requests")
         tools, tool_choice = await self._route(msgs)
         new_msgs: list[ChatMessage] = []
+        round_texts: list[str] = []
         for _ in range(settings.max_react_iterations):
             round_tool_choice = tool_choice
             tool_choice = "auto"
@@ -246,6 +247,8 @@ class TravelOrchestrator:
                 metrics.record_tokens(resp.usage.prompt_tokens, resp.usage.completion_tokens)
             choice = resp.choices[0]
             msg = choice.message
+            if msg.content:
+                round_texts.append(msg.content)
 
             if msg.tool_calls:
                 tc_dicts = [
@@ -288,12 +291,17 @@ class TravelOrchestrator:
                     )
                 continue
 
-            content = msg.content or ""
             await self._persist_thread(
                 session_id,
-                [*msgs, *new_msgs, ChatMessage(role=MessageRole.ASSISTANT, content=content)],
+                [
+                    *msgs,
+                    *new_msgs,
+                    ChatMessage(role=MessageRole.ASSISTANT, content=msg.content or ""),
+                ],
                 user_id=user_id,
             )
+            # 响应正文带上工具轮的过渡文本，与流式端看到的内容一致
+            content = "\n\n".join(round_texts)
             return {
                 "id": getattr(resp, "id", str(uuid.uuid4())),
                 "created": int(time.time()),
@@ -306,6 +314,16 @@ class TravelOrchestrator:
                 },
             }
 
+        error_text = "已达到最大推理轮次，请简化问题后重试。"
+        await self._persist_thread(
+            session_id,
+            [
+                *msgs,
+                *new_msgs,
+                ChatMessage(role=MessageRole.ASSISTANT, content=f"（{error_text}）"),
+            ],
+            user_id=user_id,
+        )
         return {
             "id": str(uuid.uuid4()),
             "created": int(time.time()),
@@ -315,7 +333,7 @@ class TravelOrchestrator:
                     "index": 0,
                     "message": {
                         "role": "assistant",
-                        "content": "已达到最大推理轮次，请简化问题后重试。",
+                        "content": "\n\n".join([*round_texts, f"（{error_text}）"]),
                     },
                 }
             ],
