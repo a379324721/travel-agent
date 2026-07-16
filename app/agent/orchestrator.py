@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from datetime import date
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -31,6 +32,20 @@ create_booking 订票 → 行程结束后 submit_expense_report 一键报销。
 涉及公司差旅制度、差标额度、审批与报销政策的问题，
 先调用 search_travel_policy_docs 检索制度原文再作答。
 系统提供「当前用户」信息时，直接使用其工号与职级调用工具，不要再向用户询问。"""
+
+_WEEKDAY_CN = "一二三四五六日"
+
+
+def _system_message() -> dict[str, Any]:
+    today = date.today()
+    return {
+        "role": "system",
+        "content": (
+            f"{SYSTEM_PROMPT}\n"
+            f"今天是 {today.isoformat()}，星期{_WEEKDAY_CN[today.weekday()]}。"
+            "解析「明天」「下周三」等相对日期时以此为准。"
+        ),
+    }
 
 
 def _to_openai_messages(messages: list[ChatMessage]) -> list[dict[str, Any]]:
@@ -188,7 +203,7 @@ class TravelOrchestrator:
         user_id: str | None = None,
     ) -> dict[str, Any]:
         msgs = await self._prepare_thread(messages, session_id)
-        openai_msgs: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        openai_msgs: list[dict[str, Any]] = [_system_message()]
         profile = self._directory.get(user_id)
         if profile is not None:
             openai_msgs.append(_identity_message(profile))
@@ -279,7 +294,7 @@ class TravelOrchestrator:
     ) -> AsyncIterator[StreamChunk]:
         """真流式：透传 LLM 增量输出；工具调用轮次发 TOOL_CALL 状态块。"""
         msgs = await self._prepare_thread(messages, session_id)
-        openai_msgs: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        openai_msgs: list[dict[str, Any]] = [_system_message()]
         profile = self._directory.get(user_id)
         if profile is not None:
             openai_msgs.append(_identity_message(profile))
