@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -14,6 +15,16 @@ from app.core.intent.llm_classifier import (
 from app.core.intent.rule_engine import RuleEngine
 
 BusinessIntent = TravelIntent
+
+# 指代/省略形态：意图寄生在上文里，关键词命中也可能是误判
+# （如「那飞机呢?」按“飞机”被判成机票搜索），须由慢车道结合上下文复核
+_CONTEXT_DEPENDENT = re.compile(
+    r"^(那|这|继续|接着|然后)|(那个|这个|刚才|之前|上面|它)|呢[?？]?$"
+)
+
+
+def _needs_context(text: str) -> bool:
+    return bool(_CONTEXT_DEPENDENT.search(text.strip()))
 
 
 @dataclass(slots=True)
@@ -210,7 +221,7 @@ class IntentRecognizer:
         """
         fast = self._rules.classify(text)
         need_slow = self._llm is not None and (
-            fast is None or fast[1] < self._slow_threshold
+            fast is None or fast[1] < self._slow_threshold or _needs_context(text)
         )
         slow: LLMClassification | None = None
         if need_slow:

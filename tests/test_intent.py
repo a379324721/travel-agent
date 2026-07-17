@@ -131,6 +131,23 @@ async def test_slow_lane_falls_back_without_tool_support() -> None:
 
 
 @pytest.mark.asyncio
+async def test_anaphoric_query_forces_slow_lane_review() -> None:
+    """「那飞机呢?」快车道按“飞机”误判 search_flight(0.82)，指代形态应强制慢车道复核。"""
+    client = _ToolLoopFakeClient(call_tool_first=False)
+    r = IntentRecognizer(llm_classifier=LLMIntentClassifier(StructuredLLMBridge(client)))
+    out = await r.recognize("那飞机呢?", recent="user: 出差住宿差标是多少")
+    assert out.intent is TravelIntent.POLICY
+    assert out.metadata["merged"] == "prefer_slow"
+
+
+@pytest.mark.asyncio
+async def test_anaphoric_query_without_slow_lane_keeps_fast() -> None:
+    r = IntentRecognizer()
+    out = await r.recognize("那飞机呢?")
+    assert out.intent is TravelIntent.SEARCH_FLIGHT, "慢车道未配置时保持快车道结果"
+
+
+@pytest.mark.asyncio
 async def test_recognizer_propagates_standalone_query() -> None:
     client = _ToolLoopFakeClient(call_tool_first=False)
     r = IntentRecognizer(llm_classifier=LLMIntentClassifier(StructuredLLMBridge(client)))
