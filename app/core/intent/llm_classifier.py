@@ -11,6 +11,9 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from app.core.intent.intents import TravelIntent
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 @runtime_checkable
@@ -126,6 +129,7 @@ class LLMIntentClassifier:
             rationale = str(payload.get("rationale", ""))
             standalone = str(payload.get("standalone_query", ""))
         except (json.JSONDecodeError, TypeError, ValueError):
+            logger.warning("intent.slow_lane.parse_error", raw=raw[:500])
             return LLMClassification("general", 0.35, "parse_error")
 
         conf = max(0.0, min(1.0, conf))

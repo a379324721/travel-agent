@@ -61,7 +61,7 @@ class StructuredLLMBridge:
                 {"role": "user", "content": user_content},
             ],
             temperature=0.0,
-            max_tokens=512,
+            max_tokens=1024,
         )
         return resp.choices[0].message.content or ""
 
@@ -79,7 +79,7 @@ class StructuredLLMBridge:
             {"role": "user", "content": user_content},
         ]
         resp = await self._client.chat_completion(
-            msgs, tools=tools, tool_choice="auto", temperature=0.0, max_tokens=512
+            msgs, tools=tools, tool_choice="auto", temperature=0.0, max_tokens=1024
         )
         msg = resp.choices[0].message
         if not getattr(msg, "tool_calls", None):
@@ -109,8 +109,12 @@ class StructuredLLMBridge:
                     "content": tool_executor(tc.function.name, tc.function.arguments or "{}"),
                 }
             )
+        # 工具往返后模型对格式约束的遵从率下降，末轮前重申只输出 JSON
+        msgs.append(
+            {"role": "system", "content": "请现在只输出要求的 JSON 对象，不要输出其它文字。"}
+        )
         resp = await self._client.chat_completion(
-            msgs, tools=tools, tool_choice="none", temperature=0.0, max_tokens=512
+            msgs, tools=tools, tool_choice="none", temperature=0.0, max_tokens=1024
         )
         return resp.choices[0].message.content or ""
 

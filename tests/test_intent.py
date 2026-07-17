@@ -93,6 +93,10 @@ async def test_slow_lane_backtracks_history_via_tool() -> None:
         m.get("role") == "tool" and "住宿差标" in m.get("content", "")
         for m in second["messages"]
     )
+    last_msg = second["messages"][-1]
+    assert last_msg["role"] == "system" and "只输出" in last_msg["content"], (
+        "末轮前应重申 JSON 格式约束"
+    )
 
 
 @pytest.mark.asyncio
