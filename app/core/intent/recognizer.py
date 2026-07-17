@@ -72,51 +72,65 @@ class StructuredLLMBridge:
         user_content: str,
         tools: list[dict[str, Any]],
         tool_executor: Callable[[str, str], str],
+        max_rounds: int = 2,
     ) -> str:
-        """最多一次工具往返的 mini 循环：第二轮 tool_choice=none 强制出结果。"""
+        """带工具的 mini 循环：最多 `max_rounds` 次 LLM 调用，
+        末轮 tool_choice=none 强制出结果。"""
         msgs: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ]
-        resp = await self._client.chat_completion(
-            msgs, tools=tools, tool_choice="auto", temperature=0.0, max_tokens=1024
-        )
-        msg = resp.choices[0].message
-        if not getattr(msg, "tool_calls", None):
-            return msg.content or ""
-        msgs.append(
-            {
-                "role": "assistant",
-                "content": msg.content,
-                "tool_calls": [
+        content = ""
+        for i in range(max_rounds):
+            is_last = i == max_rounds - 1
+            if is_last and i > 0:
+                # 工具往返后模型对格式约束的遵从率下降，末轮前重申只输出 JSON
+                msgs.append(
                     {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments or "{}",
-                        },
+                        "role": "system",
+                        "content": "请现在只输出要求的 JSON 对象，不要输出其它文字。",
                     }
-                    for tc in msg.tool_calls
-                ],
-            }
-        )
-        for tc in msg.tool_calls:
+                )
+            resp = await self._client.chat_completion(
+                msgs,
+                tools=tools,
+                tool_choice="none" if is_last else "auto",
+                temperature=0.0,
+                max_tokens=1024,
+            )
+            msg = resp.choices[0].message
+            content = msg.content or ""
+            if not getattr(msg, "tool_calls", None):
+                return content
             msgs.append(
                 {
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": tool_executor(tc.function.name, tc.function.arguments or "{}"),
+                    "role": "assistant",
+                    "content": msg.content,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments or "{}",
+                            },
+                        }
+                        for tc in msg.tool_calls
+                    ],
                 }
             )
-        # 工具往返后模型对格式约束的遵从率下降，末轮前重申只输出 JSON
-        msgs.append(
-            {"role": "system", "content": "请现在只输出要求的 JSON 对象，不要输出其它文字。"}
-        )
-        resp = await self._client.chat_completion(
-            msgs, tools=tools, tool_choice="none", temperature=0.0, max_tokens=1024
-        )
-        return resp.choices[0].message.content or ""
+            for tc in msg.tool_calls:
+                msgs.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": tool_executor(
+                            tc.function.name, tc.function.arguments or "{}"
+                        ),
+                    }
+                )
+        # 末轮仍返回 tool_calls（供应商忽略 none）时，退回已有文本而非崩溃
+        return content
 
 
 class IntentRecognizer:

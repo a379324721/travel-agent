@@ -46,20 +46,21 @@ _FINAL_JSON = json.dumps(
 
 
 class _ToolLoopFakeClient:
-    """OpenAI 兼容结构：可选首轮返回 fetch_history 调用，随后返回 JSON。"""
+    """OpenAI 兼容结构：前 `tool_rounds` 轮返回 fetch_history 调用，随后返回 JSON。"""
 
-    def __init__(self, *, call_tool_first: bool) -> None:
+    def __init__(self, *, tool_rounds: int = 0) -> None:
         self.calls: list[dict[str, Any]] = []
-        self._call_tool_first = call_tool_first
+        self._tool_rounds = tool_rounds
 
     async def chat_completion(self, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
         self.calls.append({"messages": list(messages), **kwargs})
-        if self._call_tool_first and len(self.calls) == 1:
+        n = len(self.calls)
+        if n <= self._tool_rounds:
             msg = SimpleNamespace(
                 content=None,
                 tool_calls=[
                     SimpleNamespace(
-                        id="t1",
+                        id=f"t{n}",
                         function=SimpleNamespace(
                             name="fetch_history", arguments='{"count": 5}'
                         ),
@@ -73,7 +74,7 @@ class _ToolLoopFakeClient:
 
 @pytest.mark.asyncio
 async def test_slow_lane_backtracks_history_via_tool() -> None:
-    client = _ToolLoopFakeClient(call_tool_first=True)
+    client = _ToolLoopFakeClient(tool_rounds=1)
     clf = LLMIntentClassifier(StructuredLLMBridge(client))
     fetched: list[int] = []
 
@@ -101,7 +102,7 @@ async def test_slow_lane_backtracks_history_via_tool() -> None:
 
 @pytest.mark.asyncio
 async def test_slow_lane_skips_tool_when_recent_suffices() -> None:
-    client = _ToolLoopFakeClient(call_tool_first=False)
+    client = _ToolLoopFakeClient(tool_rounds=0)
     clf = LLMIntentClassifier(StructuredLLMBridge(client))
     fetched: list[int] = []
 
@@ -113,6 +114,38 @@ async def test_slow_lane_skips_tool_when_recent_suffices() -> None:
     assert len(client.calls) == 1, "最近对话足够时不应产生第二次调用"
     assert fetched == []
     assert out.intent_slug == "policy"
+
+
+@pytest.mark.asyncio
+async def test_complete_with_tools_supports_multiple_rounds() -> None:
+    client = _ToolLoopFakeClient(tool_rounds=2)
+    bridge = StructuredLLMBridge(client)
+    raw = await bridge.complete_with_tools(
+        system_prompt="s",
+        user_content="u",
+        tools=[],
+        tool_executor=lambda name, args: "历史片段",
+        max_rounds=3,
+    )
+    assert len(client.calls) == 3
+    assert [c["tool_choice"] for c in client.calls] == ["auto", "auto", "none"]
+    assert raw == _FINAL_JSON
+
+
+@pytest.mark.asyncio
+async def test_complete_with_tools_survives_ignored_none() -> None:
+    """末轮供应商忽略 tool_choice=none 仍返回 tool_calls 时，不崩溃返回已有文本。"""
+    client = _ToolLoopFakeClient(tool_rounds=5)
+    bridge = StructuredLLMBridge(client)
+    raw = await bridge.complete_with_tools(
+        system_prompt="s",
+        user_content="u",
+        tools=[],
+        tool_executor=lambda name, args: "历史片段",
+        max_rounds=2,
+    )
+    assert len(client.calls) == 2, "不应超出 max_rounds"
+    assert raw == ""
 
 
 @pytest.mark.asyncio
@@ -137,7 +170,7 @@ async def test_slow_lane_falls_back_without_tool_support() -> None:
 @pytest.mark.asyncio
 async def test_anaphoric_query_forces_slow_lane_review() -> None:
     """「那飞机呢?」快车道按“飞机”误判 search_flight(0.82)，指代形态应强制慢车道复核。"""
-    client = _ToolLoopFakeClient(call_tool_first=False)
+    client = _ToolLoopFakeClient(tool_rounds=0)
     r = IntentRecognizer(llm_classifier=LLMIntentClassifier(StructuredLLMBridge(client)))
     out = await r.recognize("那飞机呢?", recent="user: 出差住宿差标是多少")
     assert out.intent is TravelIntent.POLICY
@@ -153,7 +186,7 @@ async def test_anaphoric_query_without_slow_lane_keeps_fast() -> None:
 
 @pytest.mark.asyncio
 async def test_recognizer_propagates_standalone_query() -> None:
-    client = _ToolLoopFakeClient(call_tool_first=False)
+    client = _ToolLoopFakeClient(tool_rounds=0)
     r = IntentRecognizer(llm_classifier=LLMIntentClassifier(StructuredLLMBridge(client)))
     out = await r.recognize("那这个呢?", recent="user: 住宿差标", fetch_history=lambda n: "")
     assert out.intent is TravelIntent.POLICY
