@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,6 +24,7 @@ class IntentResult:
     confidence: float
     slots: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    standalone_query: str = ""
 
 
 class StructuredLLMBridge:
@@ -49,6 +51,55 @@ class StructuredLLMBridge:
             ],
             temperature=0.0,
             max_tokens=512,
+        )
+        return resp.choices[0].message.content or ""
+
+    async def complete_with_tools(
+        self,
+        *,
+        system_prompt: str,
+        user_content: str,
+        tools: list[dict[str, Any]],
+        tool_executor: Callable[[str, str], str],
+    ) -> str:
+        """最多一次工具往返的 mini 循环：第二轮 tool_choice=none 强制出结果。"""
+        msgs: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+        resp = await self._client.chat_completion(
+            msgs, tools=tools, tool_choice="auto", temperature=0.0, max_tokens=512
+        )
+        msg = resp.choices[0].message
+        if not getattr(msg, "tool_calls", None):
+            return msg.content or ""
+        msgs.append(
+            {
+                "role": "assistant",
+                "content": msg.content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments or "{}",
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ],
+            }
+        )
+        for tc in msg.tool_calls:
+            msgs.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": tool_executor(tc.function.name, tc.function.arguments or "{}"),
+                }
+            )
+        resp = await self._client.chat_completion(
+            msgs, tools=tools, tool_choice="none", temperature=0.0, max_tokens=512
         )
         return resp.choices[0].message.content or ""
 
@@ -116,6 +167,7 @@ class IntentRecognizer:
                 intent,
                 slow.confidence,
                 metadata={"fast_lane": None, "slow_lane": slow, "merged": "slow_only"},
+                standalone_query=slow.standalone_query,
             )
         assert fast is not None and slow is not None
         i_fast = self._slug_to_intent(fast[0])
@@ -130,6 +182,7 @@ class IntentRecognizer:
                     "slow_lane": slow,
                     "merged": "agree",
                 },
+                standalone_query=slow.standalone_query,
             )
         if fast[1] >= slow.confidence + 0.05:
             return IntentResult(
@@ -141,17 +194,29 @@ class IntentRecognizer:
             i_slow,
             slow.confidence,
             metadata={"fast_lane": fast, "slow_lane": slow, "merged": "prefer_slow"},
+            standalone_query=slow.standalone_query,
         )
 
-    async def recognize(self, text: str) -> IntentResult:
-        """异步识别用户文本，返回意图与合并置信度。"""
+    async def recognize(
+        self,
+        text: str,
+        *,
+        recent: str = "",
+        fetch_history: Callable[[int], str] | None = None,
+    ) -> IntentResult:
+        """异步识别用户文本，返回意图与合并置信度。
+
+        `recent`/`fetch_history` 仅供慢车道消歧；快车道规则始终只看 `text`。
+        """
         fast = self._rules.classify(text)
         need_slow = self._llm is not None and (
             fast is None or fast[1] < self._slow_threshold
         )
         slow: LLMClassification | None = None
         if need_slow:
-            slow = await self._llm.classify(text)
+            slow = await self._llm.classify(
+                text, recent=recent, fetch_history=fetch_history
+            )
         if not need_slow and fast is not None:
             intent = self._slug_to_intent(fast[0])
             return IntentResult(

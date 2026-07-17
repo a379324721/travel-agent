@@ -125,6 +125,39 @@ async def test_policy_intent_forces_rag_tool_first_round(monkeypatch) -> None:
     assert llm.calls[1]["tool_choice"] == "auto"
 
 
+async def test_route_appends_standalone_query_hint(monkeypatch) -> None:
+    from app.config import settings
+    from app.core.intent.llm_classifier import LLMClassification
+
+    monkeypatch.setattr(settings, "llm_force_tool_choice", True)
+
+    class FakeClassifier:
+        async def classify(self, text: str, **kwargs: Any) -> LLMClassification:
+            return LLMClassification("policy", 0.95, "续问", "飞机舱位的差旅标准是多少")
+
+    recognizer = IntentRecognizer(llm_classifier=FakeClassifier())  # type: ignore[arg-type]
+    llm = FakeLLM(
+        [
+            _tool_call_completion("search_travel_policy_docs", '{"query": "舱位差标"}'),
+            _final_completion("以公司制度为准。"),
+        ]
+    )
+    orch = TravelOrchestrator(llm=llm, intent_recognizer=recognizer)  # type: ignore[arg-type]
+    await orch.run_completion([_user("那这个呢?")])
+
+    first = llm.calls[0]
+    assert first["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "search_travel_policy_docs"},
+    }
+    hint = [
+        m
+        for m in first["messages"]
+        if m.get("role") == "system" and "建议使用查询词" in m.get("content", "")
+    ]
+    assert hint and "飞机舱位的差旅标准" in hint[0]["content"]
+
+
 async def test_flight_search_tool_executes_mock_source() -> None:
     llm = FakeLLM(
         [

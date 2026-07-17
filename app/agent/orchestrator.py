@@ -191,27 +191,51 @@ class TravelOrchestrator:
 
     async def _route(
         self, messages: list[ChatMessage]
-    ) -> tuple[list[dict[str, Any]] | None, Any]:
+    ) -> tuple[list[dict[str, Any]] | None, Any, dict[str, Any] | None]:
         """意图路由：政策类问题首轮强制检索制度文档。
 
         GENERAL 表示"规则未识别"而非闲聊，工具保持可用（tool_choice=auto），
         否则未覆盖的表达（如报销）会让模型无工具可调而编造结果。
+
+        返回 (tools, tool_choice, hint)；hint 为可选 system 消息，调用方追加到
+        消息尾部（不动前缀，缓存安全），携带慢车道改写出的检索词。
         """
         last_user = next(
             (m.content for m in reversed(messages) if m.role == MessageRole.USER), ""
         )
-        result = await self._recognizer.recognize(last_user)
+        # 慢车道消歧上下文：默认最近 3 条文本消息，更早的由分类器按需回溯
+        texts = [
+            f"{m.role.value}: {m.content}"
+            for m in messages
+            if m.role in (MessageRole.USER, MessageRole.ASSISTANT) and m.content
+        ]
+        recent, earlier = texts[-3:], texts[:-3]
+
+        def fetch_history(count: int) -> str:
+            taken = earlier[-count:] if count > 0 else []
+            return "\n".join(taken) or "（没有更早的记录）"
+
+        result = await self._recognizer.recognize(
+            last_user, recent="\n".join(recent), fetch_history=fetch_history
+        )
         logger.info(
             "intent.recognized",
             intent=result.intent.value,
             confidence=result.confidence,
             lane=result.metadata.get("merged"),
+            standalone_query=result.standalone_query or None,
         )
         is_policy = result.intent in (TravelIntent.POLICY, TravelIntent.RAG)
         if is_policy and settings.llm_force_tool_choice:
             forced = {"type": "function", "function": {"name": "search_travel_policy_docs"}}
-            return self._tool_defs(), forced
-        return self._tool_defs(), "auto"
+            hint = None
+            if result.standalone_query:
+                hint = {
+                    "role": "system",
+                    "content": f"检索制度文档时建议使用查询词：{result.standalone_query}",
+                }
+            return self._tool_defs(), forced, hint
+        return self._tool_defs(), "auto", None
 
     async def _execute_tool(self, name: str, arguments: str) -> str:
         metrics = get_metrics()
@@ -244,7 +268,9 @@ class TravelOrchestrator:
 
         metrics = get_metrics()
         metrics.increment_counter("chat_requests")
-        tools, tool_choice = await self._route(msgs)
+        tools, tool_choice, route_hint = await self._route(msgs)
+        if route_hint is not None:
+            openai_msgs.append(route_hint)
         new_msgs: list[ChatMessage] = []
         round_texts: list[str] = []
         for i in range(settings.max_react_iterations):
@@ -368,7 +394,9 @@ class TravelOrchestrator:
             openai_msgs.append(_identity_message(profile))
         openai_msgs.extend(_to_openai_messages(msgs))
 
-        tools, tool_choice = await self._route(msgs)
+        tools, tool_choice, route_hint = await self._route(msgs)
+        if route_hint is not None:
+            openai_msgs.append(route_hint)
         idx = 0
         new_msgs: list[ChatMessage] = []
         for i in range(settings.max_react_iterations):
