@@ -30,6 +30,22 @@ class StructuredLLMClient(Protocol):
         """返回 JSON 字符串，包含 intent_slug 与 confidence。"""
 
 
+@runtime_checkable
+class ToolCallingLLMClient(StructuredLLMClient, Protocol):
+    """在结构化输出之上支持工具调用 mini 循环的 LLM 客户端。"""
+
+    async def complete_with_tools(
+        self,
+        *,
+        system_prompt: str,
+        user_content: str,
+        tools: list[dict[str, Any]],
+        tool_executor: Callable[[str, str], str],
+        max_rounds: int = 2,
+    ) -> str:
+        """带工具执行器的多轮调用，返回最终文本。"""
+
+
 _JSON_BLOCK = re.compile(r"\{[\s\S]*\}")
 
 # 只给分类器用的私有工具，不进主 ToolRegistry
@@ -92,8 +108,7 @@ class LLMIntentClassifier:
         catalog = "\n".join(f"- {i.value}: {i.description}" for i in TravelIntent)
         context = f"最近对话：\n{recent or '（无）'}\n\n"
         user = f"{context}待分类的用户输入：\n{text}\n\n可选意图（slug: 含义）：\n{catalog}"
-        supports_tools = hasattr(self._llm, "complete_with_tools")
-        if fetch_history is not None and supports_tools:
+        if fetch_history is not None and isinstance(self._llm, ToolCallingLLMClient):
             raw = await self._llm.complete_with_tools(
                 system_prompt=system,
                 user_content=user,
