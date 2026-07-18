@@ -28,9 +28,9 @@ class Settings(BaseSettings):
     intent_slow_lane_enabled: bool = True
     intent_slow_lane_threshold: float = 0.82
     max_react_iterations: int = 10
-    memory_window_size: int = 20
-    memory_max_tokens: int = 8000
+    # 记忆压缩：超过 threshold 先摘要压缩（主力），max_tokens 是压缩后仍超预算的硬裁兜底
     memory_summary_token_threshold: int = 6000
+    memory_max_tokens: int = 12000
     session_ttl_seconds: int = 604800
 
     # RAG config

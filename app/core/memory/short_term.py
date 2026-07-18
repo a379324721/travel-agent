@@ -1,7 +1,8 @@
-"""Short-term conversation memory with sliding window and token budgeting."""
+"""Short-term conversation memory with token budgeting."""
 
 from __future__ import annotations
 
+import json
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -30,18 +31,16 @@ class ChatTurn:
 
 
 class ShortTermMemory:
-    """Keeps recent turns under a token ceiling using a sliding window."""
+    """Holds conversation turns; trim_to_budget() 是兜底保险丝，摘要压缩才是主力。"""
 
     def __init__(
         self,
         *,
         model_encoding: str = "cl100k_base",
-        max_tokens: int = 8000,
-        max_turns: int = 40,
+        max_tokens: int = 12000,
     ) -> None:
         self._enc = tiktoken.get_encoding(model_encoding) if tiktoken is not None else None
         self._max_tokens = max_tokens
-        self._max_turns = max_turns
         self._turns: deque[ChatTurn] = deque()
 
     def _count_tokens(self, text: str) -> int:
@@ -49,28 +48,23 @@ class ShortTermMemory:
             return len(self._enc.encode(text))
         return _approx_token_count(text)
 
-    def total_tokens(self) -> int:
-        return sum(self._count_tokens(t.content) for t in self._turns)
+    def _turn_tokens(self, turn: ChatTurn) -> int:
+        tokens = self._count_tokens(turn.content)
+        if turn.tool_calls:
+            tokens += self._count_tokens(json.dumps(turn.tool_calls, ensure_ascii=False))
+        return tokens
 
-    def append(self, turn: ChatTurn) -> None:
-        self._turns.append(turn)
-        self._trim_by_turns()
-        self._trim_by_tokens()
+    def total_tokens(self) -> int:
+        return sum(self._turn_tokens(t) for t in self._turns)
 
     def extend(self, turns: list[ChatTurn]) -> None:
-        for t in turns:
-            self._turns.append(t)
-        self._trim_by_turns()
-        self._trim_by_tokens()
+        self._turns.extend(turns)
 
-    def _trim_by_turns(self) -> None:
-        while len(self._turns) > self._max_turns:
-            self._turns.popleft()
-        self._drop_orphan_tool_turns()
-
-    def _trim_by_tokens(self) -> None:
-        while self._turns and self.total_tokens() > self._max_tokens:
-            self._turns.popleft()
+    def trim_to_budget(self) -> None:
+        """兜底硬裁：摘要压缩后仍超预算时，从队首丢最旧的。"""
+        total = self.total_tokens()
+        while self._turns and total > self._max_tokens:
+            total -= self._turn_tokens(self._turns.popleft())
         self._drop_orphan_tool_turns()
 
     def _drop_orphan_tool_turns(self) -> None:

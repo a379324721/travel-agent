@@ -274,17 +274,66 @@ async def test_stream_last_round_forces_text_wrap_up(monkeypatch) -> None:
     )
 
 
-def test_short_term_memory_drops_orphan_tool_turns() -> None:
+def test_short_term_memory_trim_drops_orphan_tool_turns() -> None:
     from app.core.memory.short_term import ChatTurn, ShortTermMemory
 
-    memory = ShortTermMemory(max_tokens=8000, max_turns=2)
+    memory = ShortTermMemory(max_tokens=20)
     memory.extend(
         [
-            ChatTurn(role="user", content="订票"),
-            ChatTurn(role="assistant", content="", tool_calls=[{"id": "c1"}]),
+            ChatTurn(role="user", content="帮我订去上海的高铁票"),
+            ChatTurn(
+                role="assistant",
+                content="好的，我先查询车次与余票情况。" * 10,
+                tool_calls=[{"id": "c1"}],
+            ),
             ChatTurn(role="tool", content="结果", tool_call_id="c1"),
             ChatTurn(role="assistant", content="已订"),
         ]
     )
-    # max_turns=2 会裁掉发起 tool_calls 的 assistant，队首孤儿 tool 应一并丢弃
+    memory.trim_to_budget()
+    # 硬裁砍掉发起 tool_calls 的 assistant 后，队首孤儿 tool 应一并丢弃
     assert [t.role for t in memory.snapshot()] == ["assistant"]
+
+
+def test_short_term_memory_counts_tool_call_tokens() -> None:
+    from app.core.memory.short_term import ChatTurn, ShortTermMemory
+
+    memory = ShortTermMemory(max_tokens=8000)
+    memory.extend(
+        [
+            ChatTurn(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    {
+                        "id": "c1",
+                        "function": {"name": "plan", "arguments": '{"city": "上海"}'},
+                    }
+                ],
+            )
+        ]
+    )
+    assert memory.total_tokens() > 5, "tool_calls 的 JSON 体积应计入 token 预算"
+
+
+async def test_summarizer_compresses_over_threshold_keeping_recent() -> None:
+    from app.core.memory.short_term import ChatTurn, ShortTermMemory
+    from app.core.memory.summary import MemorySummarizer
+
+    llm = FakeLLM(completions=[_completion("- 用户计划去上海出差")])
+    memory = ShortTermMemory(max_tokens=8000)
+    memory.extend(
+        [
+            ChatTurn(role="user", content="我下周要去上海出差三天"),
+            ChatTurn(role="assistant", content="好的，需要帮你规划行程吗？"),
+            ChatTurn(role="user", content="需要，顺便看下差标"),
+            ChatTurn(role="assistant", content="你的职级高铁可坐二等座。"),
+        ]
+    )
+    await MemorySummarizer(llm, token_threshold=10).maybe_compress(memory)  # type: ignore[arg-type]
+
+    turns = memory.snapshot()
+    assert turns[0].role == "system" and "[历史摘要]" in turns[0].content
+    assert "上海出差" in turns[0].content
+    # 后半段原文保留
+    assert [t.content for t in turns[1:]] == ["需要，顺便看下差标", "你的职级高铁可坐二等座。"]

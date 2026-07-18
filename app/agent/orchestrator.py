@@ -129,14 +129,11 @@ class TravelOrchestrator:
     async def _prepare_thread(
         self, messages: list[ChatMessage], session_id: str | None
     ) -> list[ChatMessage]:
-        """历史加载 → 拼接本轮消息 → token 预算裁剪 → 超阈值时摘要压缩。"""
+        """历史加载 → 拼接本轮消息 → 超阈值先摘要压缩 → token 预算硬裁兜底。"""
         history: list[ChatMessage] = []
         if self._sessions is not None and session_id:
             history = await self._sessions.load(session_id)
-        memory = ShortTermMemory(
-            max_tokens=settings.memory_max_tokens,
-            max_turns=settings.memory_window_size,
-        )
+        memory = ShortTermMemory(max_tokens=settings.memory_max_tokens)
         memory.extend(
             [
                 ChatTurn(
@@ -150,6 +147,7 @@ class TravelOrchestrator:
             ]
         )
         await self._summarizer.maybe_compress(memory)
+        memory.trim_to_budget()
         return [
             ChatMessage(
                 role=MessageRole(t.role),
