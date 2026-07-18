@@ -112,6 +112,16 @@
   }
   .chip .name { font-weight: 600; }
   .chip .args { color: var(--muted); }
+  .msg.compact { justify-content: center; }
+  .compact-note {
+    max-width: 82%; font-size: 12.5px; color: var(--muted);
+    background: var(--chip-bg); border: 1px dashed var(--line);
+    border-radius: 10px; padding: 6px 14px;
+  }
+  .compact-note summary { cursor: pointer; list-style: none; text-align: center; }
+  .compact-note summary::-webkit-details-marker { display: none; }
+  .compact-note[open] summary { margin-bottom: 6px; }
+  .compact-note .body { white-space: pre-wrap; text-align: left; }
   .error { color: #c0392b; }
   .typing::after { content: "▍"; animation: blink 1s infinite; color: var(--muted); }
   @keyframes blink { 50% { opacity: 0; } }
@@ -278,6 +288,17 @@ function addChip(container, toolName, args) {
   scrollBottom();
 }
 
+/* 记忆压缩产生的 [历史摘要] system 消息：渲染为可展开的压缩提示条。 */
+function addCompactNote(text) {
+  const wrap = document.createElement("div");
+  wrap.className = "msg compact";
+  wrap.innerHTML =
+    '<details class="compact-note"><summary>已压缩较早的对话，点击查看摘要</summary>' +
+    '<div class="body"></div></details>';
+  wrap.querySelector(".body").textContent = text.replace(/^\[历史摘要\]\s*/, "");
+  messagesEl.appendChild(wrap);
+}
+
 async function loadHistory(id) {
   clearMessages();
   try {
@@ -285,6 +306,10 @@ async function loadHistory(id) {
     if (!r.ok) return;
     const data = await r.json();
     for (const m of data.messages || []) {
+      if (m.role === "system" && (m.content || "").startsWith("[历史摘要]")) {
+        addCompactNote(m.content);
+        continue;
+      }
       if (m.role === "user") { addMsg(m.role, m.content); continue; }
       if (m.role !== "assistant") continue;
       if (m.content) addMsg(m.role, m.content);
