@@ -89,11 +89,14 @@ async def test_slow_lane_backtracks_history_via_tool() -> None:
     assert out.intent_slug == "policy"
     assert out.standalone_query == "飞机舱位的差旅标准是多少"
     second = client.calls[1]
-    assert second["tool_choice"] == "none", "工具往返后应强制出结果"
+    assert second["tools"] is None, "末轮不应携带 tools，避免幻觉出列表外的工具调用"
+    assert not any(
+        m.get("role") == "tool" or m.get("tool_calls") for m in second["messages"]
+    ), "工具往返不应以结构化格式回填，避免末轮模仿工具调用"
     assert any(
-        m.get("role") == "tool" and "住宿差标" in m.get("content", "")
+        m.get("role") == "user" and "住宿差标" in m.get("content", "")
         for m in second["messages"]
-    )
+    ), "工具结果应折叠为普通文本回填"
     last_msg = second["messages"][-1]
     assert last_msg["role"] == "system" and "只输出" in last_msg["content"], (
         "末轮前应重申 JSON 格式约束"
@@ -128,13 +131,13 @@ async def test_complete_with_tools_supports_multiple_rounds() -> None:
         max_rounds=3,
     )
     assert len(client.calls) == 3
-    assert [c["tool_choice"] for c in client.calls] == ["auto", "auto", "none"]
+    assert [c["tools"] is None for c in client.calls] == [False, False, True]
     assert raw == _FINAL_JSON
 
 
 @pytest.mark.asyncio
 async def test_complete_with_tools_survives_ignored_none() -> None:
-    """末轮供应商忽略 tool_choice=none 仍返回 tool_calls 时，不崩溃返回已有文本。"""
+    """末轮未传 tools 却仍返回 tool_calls 时，不崩溃返回已有文本。"""
     client = _ToolLoopFakeClient(tool_rounds=5)
     bridge = StructuredLLMBridge(client)
     raw = await bridge.complete_with_tools(

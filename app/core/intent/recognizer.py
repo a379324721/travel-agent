@@ -13,6 +13,9 @@ from app.core.intent.llm_classifier import (
     LLMIntentClassifier,
 )
 from app.core.intent.rule_engine import RuleEngine
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 BusinessIntent = TravelIntent
 
@@ -75,7 +78,12 @@ class StructuredLLMBridge:
         max_rounds: int = 2,
     ) -> str:
         """带工具的 mini 循环：最多 `max_rounds` 次 LLM 调用，
-        末轮 tool_choice=none 强制出结果。"""
+        末轮不传 tools，让模型脱离函数调用语境、只能输出文本。
+
+        工具结果折叠为普通文本消息回填，不用 assistant tool_calls / role=tool：
+        对话里一旦出现过工具调用格式，Qwen 末轮会模仿上文继续幻觉工具调用
+        （即便请求没传 tools），content 恒为空。
+        """
         msgs: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
@@ -91,10 +99,11 @@ class StructuredLLMBridge:
                         "content": "请现在只输出要求的 JSON 对象，不要输出其它文字。",
                     }
                 )
+            # tool_choice="none" 拦不住模型幻觉出列表外的工具调用，
+            # 末轮必须整个不传 tools
             resp = await self._client.chat_completion(
                 msgs,
-                tools=tools,
-                tool_choice="none" if is_last else "auto",
+                tools=None if is_last else tools,
                 temperature=0.0,
                 max_tokens=1024,
             )
@@ -102,34 +111,14 @@ class StructuredLLMBridge:
             content = msg.content or ""
             if not getattr(msg, "tool_calls", None):
                 return content
-            msgs.append(
-                {
-                    "role": "assistant",
-                    "content": msg.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments or "{}",
-                            },
-                        }
-                        for tc in msg.tool_calls
-                    ],
-                }
+            results = "\n\n".join(
+                f"你调用了 {tc.function.name}，返回：\n"
+                + tool_executor(tc.function.name, tc.function.arguments or "{}")
+                for tc in msg.tool_calls
             )
-            for tc in msg.tool_calls:
-                msgs.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": tool_executor(
-                            tc.function.name, tc.function.arguments or "{}"
-                        ),
-                    }
-                )
-        # 末轮仍返回 tool_calls（供应商忽略 none）时，退回已有文本而非崩溃
+            msgs.append({"role": "user", "content": results})
+        # 末轮未传 tools 却仍返回 tool_calls 时，留痕后退回已有文本而非崩溃
+        logger.warning("intent.slow_lane.tool_call_on_final_round")
         return content
 
 
