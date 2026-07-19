@@ -18,10 +18,7 @@ class EmbeddingService:
         self._dimensions = settings.embedding_dimensions
 
     async def embed_text(self, text: str) -> list[float]:
-        resp = await self._client.embeddings.create(
-            model=self._model, input=text[:8000], dimensions=self._dimensions
-        )
-        return list(resp.data[0].embedding)
+        return (await self.embed_texts([text]))[0]
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         out: list[list[float]] = []
